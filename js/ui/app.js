@@ -331,6 +331,36 @@ function freeEndAt(sx, sy, maxDist = 18) {
   }
   return best;
 }
+/** Über Gelenke verbundene Baugruppe eines Körpers */
+function hingeGroup(bodyId) {
+  const g = new Set([bodyId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const h of state.sys.elements) {
+      if (h.type !== 'hinge') continue;
+      const a = h.a?.el, b = h.b?.el;
+      if (g.has(a) && !g.has(b) && b) { g.add(b); grew = true; }
+      if (g.has(b) && !g.has(a) && a) { g.add(a); grew = true; }
+    }
+  }
+  return g;
+}
+/** Ist die Baugruppe gelagert (Fest-/Loslager oder Bodenkontakt)? */
+function groupAnchored(g) {
+  return state.sys.elements.some((x) => ((x.type === 'pin' || x.type === 'roller') && g.has(x.at?.el)) || (x.type === 'contact' && g.has(x.body)));
+}
+function moveGroup(g, dx, dy) {
+  for (const id of g) { const b = byId(id); if (b) { b.x = round6(b.x + dx); b.y = round6(b.y + dy); } }
+}
+/** Gelenk-/Lagerpunkt eines Körpers (Drehpunkt beim Ändern des Winkels) */
+function pivotPort(body) {
+  for (const x of state.sys.elements) {
+    if ((x.type === 'pin' || x.type === 'roller') && x.at?.el === body.id) return x.at.port;
+    if (x.type === 'hinge') { if (x.a?.el === body.id) return x.a.port; if (x.b?.el === body.id) return x.b.port; }
+  }
+  return null;
+}
 /** freies Ende in einen masselosen Knoten umwandeln (für Reihenschaltungen) */
 function nodeAtFreeEnd(fe) {
   const r = fe.line[fe.end];
@@ -538,9 +568,21 @@ function tap(sx, sy, target) {
       if (!state.pending) { state.pending = { kind: 'hinge', a: p }; updateHint(); draw(); return; }
       if (p.el === state.pending.a.el) { toast('Bitte einen Punkt an einem anderen Körper wählen.'); return; }
       const e = env();
-      const pa = portWorld(byId(state.pending.a.el), state.pending.a.port, e);
-      const B = byId(p.el), pb = portWorld(B, p.port, e);
-      B.x = round3(B.x + pa[0] - pb[0]); B.y = round3(B.y + pa[1] - pb[1]);
+      const A = byId(state.pending.a.el), B = byId(p.el);
+      const pa = portWorld(A, state.pending.a.port, e), pb = portWorld(B, p.port, e);
+      const dx = pa[0] - pb[0], dy = pa[1] - pb[1];
+      if (Math.hypot(dx, dy) > 1e-6) {
+        // Bestehende Verbindungen erhalten: nur eine ungelagerte Baugruppe als Ganzes verschieben
+        const gA = hingeGroup(A.id), gB = hingeGroup(B.id);
+        if (gA.has(B.id) || (groupAnchored(gA) && groupAnchored(gB))) {
+          if (Math.hypot(dx, dy) > 0.005) {
+            state.pending = null; updateHint(); draw();
+            toast('Die Punkte liegen nicht übereinander und beide Teile sind schon gelagert bzw. verbunden – bitte zuerst passend platzieren.', 4000);
+            return;
+          }
+        } else if (!groupAnchored(gB)) moveGroup(gB, dx, dy);
+        else moveGroup(gA, -dx, -dy);
+      }
       const el = { id: newId('h'), type: 'hinge', a: state.pending.a, b: p };
       state.sys.elements.push(el); state.sel = el.id; state.pending = null;
       break;
@@ -623,7 +665,8 @@ svg.addEventListener('pointerdown', (e) => {
   const elG = e.target.closest?.('[data-id]');
   const el = elG ? byId(elG.dataset.id) : null;
   const draggable = state.step === 'model' && state.tool === 'select' && el && (isBody(el) || el.type === 'ground' || el.type === 'fix' || el.type === 'node' || el.type === 'curve');
-  gesture = { kind: 'down', sx, sy, target: e.target, el: draggable ? el : null, ox: el?.x, oy: el?.y, view0: { ...state.view }, moved: false };
+  const grp = draggable && isBody(el) ? [...hingeGroup(el.id)].map((id) => byId(id)).map((b) => ({ b, x: b.x, y: b.y })) : null;
+  gesture = { kind: 'down', sx, sy, target: e.target, el: draggable ? el : null, ox: el?.x, oy: el?.y, grp, view0: { ...state.view }, moved: false };
 });
 svg.addEventListener('pointermove', (e) => {
   const r = svg.getBoundingClientRect();
@@ -655,8 +698,10 @@ svg.addEventListener('pointermove', (e) => {
     if (!gesture.moved && Math.hypot(dx, dy) > 5) gesture.moved = true;
     if (gesture.moved) {
       if (gesture.el) {
-        gesture.el.x = round3(snapV(gesture.ox + dx / state.view.s, 0.025));
-        gesture.el.y = round3(snapV(gesture.oy - dy / state.view.s, 0.025));
+        const nx = round3(snapV(gesture.ox + dx / state.view.s, 0.025));
+        const ny = round3(snapV(gesture.oy - dy / state.view.s, 0.025));
+        if (gesture.grp) for (const g of gesture.grp) { g.b.x = round6(g.x + nx - gesture.ox); g.b.y = round6(g.y + ny - gesture.oy); }
+        else { gesture.el.x = nx; gesture.el.y = ny; }
         updateAutoL0();
       } else {
         state.view.cx = gesture.view0.cx - dx / state.view.s;
@@ -935,11 +980,22 @@ function bindModelPanel(el) {
       return;
     }
     const v = parseFloat(inp.value);
-    if (Number.isFinite(v)) { el[k] = v; updateAutoL0(); changed(); }
+    if (Number.isFinite(v)) { if (k === 'angle') setAngle(v); else el[k] = v; updateAutoL0(); changed(); }
   }));
+  /** Winkel ändern; Körper dreht sich um seinen Gelenk-/Lagerpunkt, damit die Verbindung erhalten bleibt */
+  const setAngle = (ang) => {
+    const pv = isBody(el) ? pivotPort(el) : null;
+    const before = pv ? portWorld(el, pv, env()) : null;
+    el.angle = ang;
+    if (pv) {
+      const after = portWorld(el, pv, env());
+      el.x = round6(el.x + before[0] - after[0]); el.y = round6(el.y + before[1] - after[1]);
+    }
+  };
   panel.querySelectorAll('[data-rot]').forEach((b) => b.addEventListener('click', () => {
-    el.angle = (((el.angle || 0) + Number(b.dataset.rot)) % 360 + 360) % 360;
-    if (el.angle > 180) el.angle -= 360;
+    let a = (((el.angle || 0) + Number(b.dataset.rot)) % 360 + 360) % 360;
+    if (a > 180) a -= 360;
+    setAngle(a);
     updateAutoL0(); changed(); panelModel();
   }));
   panel.querySelector('[data-bool]')?.addEventListener('change', (e) => { el.props[e.target.dataset.bool] = e.target.checked; changed(); panelModel(); });
