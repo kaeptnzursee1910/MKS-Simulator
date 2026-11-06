@@ -36,7 +36,7 @@ python3 -m http.server 8000
 | `js/mech/numeric.js` | Übersetzung in JS-Funktionen, Integrationsverfahren, DAE-Lösung mit Projektion |
 | `js/ui/` | Zeichnung (SVG), Bedienung (Maus/Touch), Panels, Diagramme |
 | `vendor/katex` | KaTeX 0.16.9 (MIT) für die Formeldarstellung |
-| `test/` | Tests: `node test/cas.test.mjs`, `node test/derive.test.mjs all` |
+| `test/` | Tests: `node test/cas.test.mjs`, `node test/derive.test.mjs all`, `node test/validate.test.mjs` (Vergleich mit Lehrbuchlösungen) |
 
 ## Modellannahmen
 
