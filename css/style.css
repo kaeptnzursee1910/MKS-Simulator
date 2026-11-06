@@ -130,7 +130,7 @@ code { background: #eeece6; padding: 0 4px; border-radius: 4px; }
 .msg.error { background: #fdecea; color: var(--err); }
 .ptable { width: 100%; border-collapse: collapse; font-size: 14px; }
 .ptable td { padding: 3px 4px; border-bottom: 1px solid #efede7; }
-.ptable td:first-child { width: 40%; font-family: "Times New Roman", serif; font-style: italic; font-size: 16px; }
+.ptable td:first-child { width: 34%; font-family: "Times New Roman", serif; font-style: italic; font-size: 16px; }
 .ptable input { width: 100%; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; }
 .dof-item { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; padding: 8px; border: 1px solid var(--line); border-radius: 8px; margin: 6px 0; background: #fff; }
 .dof-item .dof-title { font-family: "Times New Roman", serif; font-style: italic; font-size: 18px; }
@@ -202,3 +202,6 @@ code { background: #eeece6; padding: 0 4px; border-radius: 4px; }
 
 .eq-row .katex-display { margin: 0.25em 0; text-align: left; }
 .eq-row .katex-display > .katex { text-align: left; }
+
+.unit { color: var(--muted); font-size: 0.85em; white-space: nowrap; }
+.unit-cell { color: var(--muted); font-size: 12px; white-space: nowrap; width: 1%; font-family: system-ui, sans-serif; font-style: normal; }

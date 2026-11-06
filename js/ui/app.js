@@ -4,7 +4,7 @@ import { ensureParams, usedParams, paramEnv, buildModel } from '../mech/model.js
 import { setupDofs, analyze, suggestDofs } from '../mech/kinematics.js';
 import { derive, METHODS } from '../mech/derive.js';
 import { compile, simulate, INTEGRATORS, evalInput } from '../mech/numeric.js';
-import { tryParse } from '../cas/parse.js';
+import { tryParse, paramNames as paramNamesOf } from '../cas/parse.js';
 import { nameToLatex } from '../cas/latex.js';
 import { renderScene, makeView, paletteIcon, labelSpans, lineGeometry } from './render.js';
 import { Plot, SERIES_COLORS } from './plot.js';
@@ -621,10 +621,38 @@ function field(label, key, value, opts = {}) {
   const type = opts.type || 'text';
   return `<div class="field"><label>${label}</label><input type="${type}" data-k="${key}" value="${esc(value ?? '')}" ${opts.attrs || ''} spellcheck="false" autocomplete="off" autocapitalize="off"></div>`;
 }
+// ---- Einheiten (SI)
+const PROP_UNITS = {
+  m: 'kg', J: 'kg·m²', R: 'm', Ri: 'm', a: 'm', b: 'm', l: 'm', L0: 'm',
+  k: 'N/m', d: 'N·s/m', kt: 'N·m/rad', dt: 'N·m·s/rad', F: 'N', M: 'N·m',
+};
+const FREQ_NAMES = /^(Omega|omega|w|Om)(_|$)/;
+const unitTag = (u) => (u ? ` <span class="unit">[${u}]</span>` : '');
+/** Einheit eines Parameters aus seiner Verwendung ableiten */
+function paramUnits() {
+  const units = { g: 'm/s²' };
+  for (const el of state.sys.elements) {
+    for (const [k, v] of Object.entries(el.props || {})) {
+      const u = PROP_UNITS[k];
+      if (!u || typeof v !== 'string' || !v.trim()) continue;
+      const r = tryParse(v);
+      if (r.error) continue;
+      const names = paramNamesOf(r.expr);
+      for (const n of names) if (FREQ_NAMES.test(n)) units[n] = 'rad/s';
+      const rest = names.filter((n) => !FREQ_NAMES.test(n));
+      if (rest.length === 1 && !units[rest[0]]) units[rest[0]] = u;
+    }
+  }
+  return units;
+}
+function coordUnit(c) {
+  if (c.dof) return c.dof.coord === 'phi' ? 'rad' : 'm';
+  return c.name.startsWith('T_') ? 'rad' : 'm';
+}
 function exprField(label, key, el) {
   const v = el.props?.[key] ?? '';
   const bad = v !== '' && tryParse(v).error;
-  return `<div class="field"><label>${label}</label><input type="text" class="${bad ? 'bad' : ''}" data-prop="${key}" value="${esc(v)}" spellcheck="false" autocomplete="off" autocapitalize="off"></div>`;
+  return `<div class="field"><label>${label}${unitTag(PROP_UNITS[key])}</label><input type="text" class="${bad ? 'bad' : ''}" data-prop="${key}" value="${esc(v)}" spellcheck="false" autocomplete="off" autocapitalize="off"></div>`;
 }
 function angleField(label, el, key = 'angle') {
   return `<div class="field"><label>${label}</label><div class="row"><input type="number" step="15" data-k="${key}" value="${el[key] ?? 0}" style="width:90px" class="inp"><button class="btn small" data-rot="-15">↻ 15°</button><button class="btn small" data-rot="15">↺ 15°</button></div></div>`;
@@ -639,7 +667,7 @@ function panelModel() {
     if (isBody(el)) h += field('Bezeichnung', 'label', el.label);
     switch (el.type) {
       case 'block':
-        h += exprField('Masse m', 'm', el) + exprField('Breite a', 'a', el) + exprField('Höhe b', 'b', el) + angleField('Winkel (°)', el);
+        h += exprField('Masse m', 'm', el) + exprField('Breite a', 'a', el) + exprField('Höhe b', 'b', el) + angleField('Winkel' + unitTag('°'), el);
         h += `<div class="field"><label>drehbar</label><label class="row"><input type="checkbox" data-bool="rot" ${el.props.rot ? 'checked' : ''}> Verdrehung als Koordinate</label></div>`;
         if (el.props.rot) h += exprField('Trägheit J<sub>S</sub>', 'J', el);
         break;
@@ -648,13 +676,13 @@ function panelModel() {
         h += '<p class="muted">Innenradius leer lassen für eine einfache Scheibe. Beispiele: <code>2*r</code>, <code>m*r^2/2</code>.</p>';
         break;
       case 'rod':
-        h += exprField('Masse m', 'm', el) + exprField('Länge l', 'l', el) + exprField('Trägheit J<sub>S</sub>', 'J', el) + angleField('Winkel (°)', el);
+        h += exprField('Masse m', 'm', el) + exprField('Länge l', 'l', el) + exprField('Trägheit J<sub>S</sub>', 'J', el) + angleField('Winkel' + unitTag('°'), el);
         break;
       case 'point': h += exprField('Masse m', 'm', el); break;
-      case 'ground': h += angleField('Neigung (°)', el) + field('Länge (Zeichnung)', 'len', el.len, { type: 'number', attrs: 'step="0.1" min="0.1"' }); break;
-      case 'fix': h += angleField('Richtung (°)', el); break;
-      case 'pin': h += angleField('Richtung (°)', el) + '<p class="muted">Festlager: Punkt unverschieblich, Drehung frei.</p>'; break;
-      case 'roller': h += angleField('Richtung (°)', el) + '<p class="muted">Loslager/Gleitlager: Verschiebung in Richtung des Lagers gesperrt, quer dazu frei.</p>'; break;
+      case 'ground': h += angleField('Neigung' + unitTag('°'), el) + field('Länge (Zeichnung)' + unitTag('m'), 'len', el.len, { type: 'number', attrs: 'step="0.1" min="0.1"' }); break;
+      case 'fix': h += angleField('Richtung' + unitTag('°'), el); break;
+      case 'pin': h += angleField('Richtung' + unitTag('°'), el) + '<p class="muted">Festlager: Punkt unverschieblich, Drehung frei.</p>'; break;
+      case 'roller': h += angleField('Richtung' + unitTag('°'), el) + '<p class="muted">Loslager/Gleitlager: Verschiebung in Richtung des Lagers gesperrt, quer dazu frei.</p>'; break;
       case 'hinge': h += '<p class="muted">Gelenk: Anschlusspunkte beider Körper bleiben zusammen, relative Drehung frei.</p>'; break;
       case 'contact': {
         const b = byId(el.body);
@@ -670,7 +698,7 @@ function panelModel() {
         break;
       case 'tspring': h += exprField('Drehsteifigkeit', 'kt', el); break;
       case 'tdamper': h += exprField('Drehdämpfung', 'dt', el); break;
-      case 'force': h += exprField('Kraft F(t)', 'F', el) + angleField('Richtung (°)', el) + '<p class="muted">Z. B. <code>F_0*cos(Omega*t)</code>. Richtung bleibt raumfest.</p>'; break;
+      case 'force': h += exprField('Kraft F(t)', 'F', el) + angleField('Richtung' + unitTag('°'), el) + '<p class="muted">Z. B. <code>F_0*cos(Omega*t)</code>. Richtung bleibt raumfest.</p>'; break;
       case 'moment':
         h += exprField('Moment M(t)', 'M', el);
         h += `<div class="field"><label>Drehsinn</label><div class="seg"><button data-mdir="1" class="${el.dir !== -1 ? 'on' : ''}">↺ gegen Uhrzeiger</button><button data-mdir="-1" class="${el.dir === -1 ? 'on' : ''}">↻ im Uhrzeiger</button></div></div>`;
@@ -689,8 +717,9 @@ function panelModel() {
 function paramTable() {
   const names = ensureParams(state.sys);
   if (!names.length) return '<p class="muted">Noch keine Parameter.</p>';
+  const units = paramUnits();
   return '<table class="ptable">' + names.map((n) =>
-    `<tr><td>${katexStr(nameTex(n))}</td><td><input type="number" step="any" data-param="${esc(n)}" value="${state.sys.params[n]}"></td></tr>`).join('') + '</table>';
+    `<tr><td>${katexStr(nameTex(n))}</td><td><input type="number" step="any" data-param="${esc(n)}" value="${state.sys.params[n]}"></td><td class="unit-cell">${esc(units[n] || '')}</td></tr>`).join('') + '</table>';
 }
 function bindParamInputs(root) {
   root.querySelectorAll('[data-param]').forEach((inp) => inp.addEventListener('input', () => {
@@ -887,18 +916,18 @@ function panelSim() {
     panel.querySelector('[data-goto]')?.addEventListener('click', () => setStep('dof'));
     return;
   }
-  h += '<h3>Anfangswerte</h3><div class="card"><table class="ptable"><tr><td></td><td class="muted" style="font-family:system-ui;font-style:normal;font-size:12px">q(0)</td><td class="muted" style="font-size:12px">q̇(0)</td></tr>';
+  h += '<h3>Anfangswerte</h3><div class="card"><table class="ptable"><tr><td></td><td class="muted" style="font-family:system-ui;font-style:normal;font-size:12px">q(0)</td><td class="muted" style="font-size:12px">q̇(0)</td><td></td></tr>';
   for (const d of sys.dofs) {
     const iv = sys.sim.init[d.id] || (sys.sim.init[d.id] = { q: '0', qd: '0' });
-    h += `<tr><td>${katexStr(nameTex(d.name))}</td><td><input data-iq="${d.id}" value="${esc(iv.q)}"></td><td><input data-iqd="${d.id}" value="${esc(iv.qd)}"></td></tr>`;
+    h += `<tr><td>${katexStr(nameTex(d.name))}</td><td><input data-iq="${d.id}" value="${esc(iv.q)}"></td><td><input data-iqd="${d.id}" value="${esc(iv.qd)}"></td><td class="unit-cell">${d.coord === 'phi' ? 'rad<br>rad/s' : 'm<br>m/s'}</td></tr>`;
   }
   h += '</table><p class="muted">Winkel in rad (z. B. <code>10*pi/180</code>), Längen in m.</p></div>';
   h += '<h3>Zeitdiskretisierung</h3><div class="card">';
   h += `<div class="field"><label>Verfahren</label><select data-integ class="inp">${Object.entries(INTEGRATORS).map(([k, v]) => `<option value="${k}" ${sys.sim.integrator === k ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></div>`;
   h += `<div class="formula" style="font-size:13px">${katexStr(INTEGRATORS[sys.sim.integrator]?.tex || '', true)}</div>`;
   h += `<p class="muted">Zustand ${katexStr('\\mathbf{y} = [\\mathbf{q}, \\dot{\\mathbf{q}}]^T')}, ${katexStr('\\mathbf{F} = [\\dot{\\mathbf{q}}, \\ddot{\\mathbf{q}}]^T')}${r.numeric.type === 'dae' ? ' (q̈ und λ aus dem Gleichungssystem, mit Projektion auf die Bindungen)' : ' mit q̈ aus M(q) q̈ = F'}.</p>`;
-  h += field('Schrittweite h (s)', 'h', sys.sim.h, { type: 'number', attrs: 'step="any" min="0"' });
-  h += field('Endzeit T (s)', 'T', sys.sim.T, { type: 'number', attrs: 'step="any" min="0"' });
+  h += field('Schrittweite h' + unitTag('s'), 'h', sys.sim.h, { type: 'number', attrs: 'step="any" min="0"' });
+  h += field('Endzeit T' + unitTag('s'), 'T', sys.sim.T, { type: 'number', attrs: 'step="any" min="0"' });
   h += `<button class="btn primary block" data-run>▶ Simulation starten</button>`;
   if (state.simError) h += `<div class="msg error">${mathText(state.simError)}</div>`;
   h += '</div>';
@@ -948,16 +977,17 @@ function setupPlot() {
     const idx = state.cm.type === 'dae' ? coords.map((_, i) => i) : dofIdx;
     series = idx.map((i, k) => ({
       key: q + i, name: (q === 'v' ? 'd/dt ' : '') + plainName(coords[i]), y: out[q].map((r) => r[i]),
+      unit: coordUnit(coords[i]) + (q === 'v' ? '/s' : ''),
       color: SERIES_COLORS[k % SERIES_COLORS.length], visible: !hiddenSeries.has(q + i) && (state.cm.type !== 'dae' || !!coords[i].dof || hiddenSeries.has('show' + q + i)),
     }));
   } else if (q === 'lam') {
     const m = out.lam[0]?.length || 0;
     series = Array.from({ length: m }, (_, j) => ({ key: 'l' + j, name: 'λ' + (j + 1), y: out.lam.map((r) => r[j]), color: SERIES_COLORS[j % SERIES_COLORS.length], visible: !hiddenSeries.has('l' + j) }));
   } else {
-    series = ['T (kinetisch)', 'U (potentiell)', 'E = T + U'].map((n, j) => ({ key: 'E' + j, name: n, y: out.E.map((r) => r[j]), color: SERIES_COLORS[j], visible: !hiddenSeries.has('E' + j) }));
+    series = ['T (kinetisch)', 'U (potentiell)', 'E = T + U'].map((n, j) => ({ key: 'E' + j, name: n, unit: 'J', y: out.E.map((r) => r[j]), color: SERIES_COLORS[j], visible: !hiddenSeries.has('E' + j) }));
   }
   const leg = $('#legend');
-  leg.innerHTML = series.map((s) => `<label><input type="checkbox" data-s="${s.key}" ${s.visible ? 'checked' : ''}><i style="background:${s.color}"></i>${esc(s.name)}</label>`).join('');
+  leg.innerHTML = series.map((s) => `<label><input type="checkbox" data-s="${s.key}" ${s.visible ? 'checked' : ''}><i style="background:${s.color}"></i>${esc(s.name)}${s.unit ? ` <span class="unit">[${esc(s.unit)}]</span>` : ''}</label>`).join('');
   leg.querySelectorAll('[data-s]').forEach((cb) => cb.addEventListener('change', () => {
     const s = series.find((x) => x.key === cb.dataset.s);
     s.visible = cb.checked;

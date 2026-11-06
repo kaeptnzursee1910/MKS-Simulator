@@ -235,7 +235,7 @@ export function renderScene(sys, V, opts = {}) {
           const P = V.S(...portWorld(B, el.at.port, env, D(B.id)));
           const dv = V.dir(el.angle || 0);
           const Q = add2(P, dv, 46);
-          out.loads += g0 + seg(P, Q, 'transparent', 12) + arrow(P, Q, c, 1.8) + text(Q[0] + dv[0] * 10 + 8, Q[1] + dv[1] * 10 - 6, labelSpans(el.props.F), { color: c }) + '</g>';
+          out.loads += g0 + seg(P, Q, 'transparent', 12) + arrow(P, Q, c, 1.8) + text(Q[0] + dv[0] * 8, Q[1] + dv[1] * 8 - (Math.abs(dv[0]) > 0.3 ? 12 : 0), labelSpans(el.props.F), { color: c, anchor: dv[0] > 0.3 ? 'start' : dv[0] < -0.3 ? 'end' : 'middle' }) + '</g>';
           break;
         }
         case 'moment': {
