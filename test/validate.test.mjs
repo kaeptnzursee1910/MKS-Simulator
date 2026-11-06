@@ -177,6 +177,66 @@ const CASES = [
     },
     ref: ['J_1*Q1dd + d*r^2*(Q1d - 3*Q2d) + 2*k*r^2*(Q1 - Q2)', '(J_2 + 4*m*r^2)*Q2dd - 3*d*r^2*(Q1d - 3*Q2d) + k*r^2*(-2*Q1 + 10*Q2)'],
   },
+  {
+    name: 'Punktmasse gleitet in Kreismulde (Radius ρ), Koordinate x',
+    modes: ['linear', 'nonlinear'],
+    symbolic: false,
+    sys: {
+      elements: [
+        { id: 'k1', type: 'curve', x: 0, y: 0.5, a0: 200, a1: 340, concave: true, props: { rho: 'rho' } },
+        { id: 'b1', type: 'point', label: '1', x: 0, y: 0, props: { m: 'm' } },
+        { id: 'c1', type: 'contact', body: 'b1', ground: 'k1', mode: 'slide' },
+      ],
+      params: { m: 1.5, rho: 0.5, g: 9.81 }, gravity: true,
+      dofs: [{ id: 'q1', body: 'b1', coord: 'x', dir: 1, name: 'x' }],
+    },
+    ref: ['m*rho^2/(rho^2-Q1^2)*Q1dd + m*rho^2*Q1*Q1d^2/(rho^2-Q1^2)^2 + m*g*Q1/sqrt(rho^2-Q1^2)'],
+    refLin: ['m*Q1dd + m*g/rho*Q1'],
+  },
+  {
+    name: 'Scheibe rollt in Kreismulde',
+    modes: ['linear', 'nonlinear'],
+    sys: {
+      elements: [
+        { id: 'k1', type: 'curve', x: 0, y: 0.5, a0: 200, a1: 340, concave: true, props: { rho: 'rho' } },
+        { id: 'b1', type: 'disk', label: '1', x: 0, y: 0.1, props: { m: 'm', J: 'J', R: 'R', Ri: '' } },
+        { id: 'c1', type: 'contact', body: 'b1', ground: 'k1', mode: 'roll' },
+      ],
+      params: { m: 2, J: 0.01, R: 0.1, rho: 0.5, g: 9.81 }, gravity: true,
+      dofs: [{ id: 'q1', body: 'b1', coord: 'phi', dir: -1, name: 'phi' }],
+    },
+    ref: ['(J + m*R^2)*Q1dd + m*g*R*sin(R*Q1/(rho-R))'],
+    refLin: ['(J + m*R^2)*Q1dd + m*g*R^2/(rho-R)*Q1'],
+  },
+  {
+    name: 'Scheibe rollt auf Zylinder (Kuppe, instabil)',
+    modes: ['linear', 'nonlinear'],
+    sys: {
+      elements: [
+        { id: 'k1', type: 'curve', x: 0, y: 0, a0: 20, a1: 160, concave: false, props: { rho: 'rho' } },
+        { id: 'b1', type: 'disk', label: '1', x: 0, y: 0.6, props: { m: 'm', J: 'J', R: 'R', Ri: '' } },
+        { id: 'c1', type: 'contact', body: 'b1', ground: 'k1', mode: 'roll' },
+      ],
+      params: { m: 2, J: 0.01, R: 0.1, rho: 0.5, g: 9.81 }, gravity: true,
+      dofs: [{ id: 'q1', body: 'b1', coord: 'phi', dir: -1, name: 'phi' }],
+    },
+    ref: ['(J + m*R^2)*Q1dd - m*g*R*sin(R*Q1/(rho+R))'],
+    refLin: ['(J + m*R^2)*Q1dd - m*g*R^2/(rho+R)*Q1'],
+  },
+  {
+    name: 'Schief gezeichnetes Pendel (Stab 30° ausgelenkt)',
+    modes: ['linear', 'nonlinear'],
+    sys: {
+      elements: [
+        { id: 'b1', type: 'rod', label: '1', x: -0.15, y: -0.2598076211, angle: 60, props: { m: 'm', J: 'J', l: 'l' } },
+        { id: 'p1', type: 'pin', at: { el: 'b1', port: 'e2' }, angle: 90 },
+      ],
+      params: { m: 1.2, J: 0.03, l: 0.6, g: 9.81 }, gravity: true,
+      dofs: [{ id: 'q1', body: 'b1', coord: 'phi', dir: 1, name: 'phi' }],
+    },
+    ref: ['(J + m*l^2/4)*Q1dd + m*g*l/2*(sqrt(3)/2*sin(Q1) - 1/2*cos(Q1))'],
+    refLin: ['(J + m*l^2/4)*Q1dd + sqrt(3)/4*m*g*l*Q1 - m*g*l/4'],
+  },
 ];
 
 // ------------------------------------------------------------------
@@ -200,7 +260,7 @@ for (const C of CASES) {
         qc.forEach((c, i) => { m.set('Q' + (i + 1), c.s); m.set('Q' + (i + 1) + 'd', c.d); m.set('Q' + (i + 1) + 'dd', c.dd); });
         const ref = refStr.map((s) => simplify(subs(parse(s), m)));
         // (a) symbolisch
-        if (method !== 'L1') {
+        if (method !== 'L1' && C.symbolic !== false) {
           const ok = res.numeric.eqs.every((e, i) => isZero(simplify(add(e, mul(MONE, ref[i])))));
           symb = ok ? 'identisch' : 'abweichend';
           if (!ok) { fails++; console.log('  symbolisch:', res.numeric.eqs.map(String).length); }
@@ -275,3 +335,16 @@ const incl = CASES.find((c) => c.name.startsWith('Rollende Scheibe auf'));
 simCase(incl, 'DAL', 'nonlinear', 0, 1, (t, e) => 0.5 * (e.m * e.g * e.R / 2 / (e.J + e.m * e.R * e.R)) * t * t, 'Rollende Scheibe: φ(t) = ½ α t²');
 const atw = CASES.find((c) => c.name.startsWith('Atwood'));
 simCase(atw, 'L1', 'nonlinear', 0, 0.4, (t, e) => 0.5 * ((e.m_1 - e.m_2) * e.g / (e.m_1 + e.m_2 + e.J / e.r ** 2)) * t * t, 'Atwood: s(t) = ½ a t²');
+
+// ------------------------------------------------------------------ freie Enden
+{
+  const sys = { elements: [
+    { id: 'b1', type: 'point', label: '1', x: 0, y: 0, props: { m: 'm' } },
+    { id: 's1', type: 'spring', a: { el: 'b1', port: 'c' }, b: { x: 0.3, y: 0 }, props: { k: 'k', L0: '0.3' } },
+  ], params: { m: 1, k: 10 }, gravity: false, dofs: [] };
+  const { buildModel } = await import('../js/mech/model.js');
+  const m = buildModel(sys);
+  const ok = m.warnings.length === 1 && m.springs.length === 0;
+  console.log((ok ? 'ok    ' : 'FEHLER') + ' Feder mit freiem Ende: wird ignoriert, Warnung ausgegeben');
+  if (!ok) process.exitCode = 1;
+}

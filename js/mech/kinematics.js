@@ -1,5 +1,5 @@
 // Freiheitsgrade, Freiheitsgradanalyse und Auflösen der Bindungen (Kinematik)
-import { leadingNegative, add, mul, pow, MONE, ZERO, num, diff, subs, simplify, sqrtsimp, evalNum, has, hasAny, freeSyms, series, isZero, expand, sqrt } from '../cas/expr.js';
+import { ratsimp, trigsimp, leadingNegative, add, mul, pow, MONE, ZERO, num, diff, subs, simplify, sqrtsimp, evalNum, has, hasAny, freeSyms, series, isZero, expand, sqrt } from '../cas/expr.js';
 import { nameToLatex } from '../cas/latex.js';
 import { makeCoord } from './model.js';
 import { rank, gaussSolve, makeTestEnvs, numericallyZero, independentRows } from './linalg.js';
@@ -58,6 +58,7 @@ export function analyze(model, dofs) {
     else if (rz < r) res.messages.push({ type: 'error', text: 'Die gewählten Koordinaten sind durch Bindungen voneinander abhängig – bitte andere Koordinaten wählen.' });
     else { res.ok = true; res.messages.push({ type: 'ok', text: `f = ${f} Freiheitsgrad${f === 1 ? '' : 'e'} – Wahl ist zulässig.` }); }
   }
+  for (const w of model.warnings || []) res.messages.push({ type: 'warn', text: w });
   if (res.redundant > 0) res.messages.push({ type: 'warn', text: `${res.redundant} Bindung(en) sind redundant (statisch überbestimmt) und werden ignoriert.` });
   return res;
 }
@@ -105,12 +106,12 @@ export function linearKinematics(model, dofs) {
     const s1 = gaussSolve(Gz, B1, envs);
     if (s1.error) throw new Error('Kinematik nicht eindeutig: Koordinate $' + deps[s1.col].tex + '$ ist durch die gewählten Freiheitsgrade nicht festgelegt. Bitte Freiheitsgrade prüfen.');
     if (s1.residual.some((r) => !numericallyZero(r[0], envs))) throw new Error('Die gewählten Freiheitsgrade sind nicht unabhängig.');
-    deps.forEach((z, i) => map1.set(z.name, s1.X[i][0]));
+    deps.forEach((z, i) => map1.set(z.name, ratsimp(s1.X[i][0])));
     // 2. Ordnung
     const m1 = new Map(deps.map((z, i) => [z.s.name, s1.X[i][0]]));
     const B2 = cons.map((c) => [simplify(mul(MONE, series(subs(c.g, m1), qs, 2)[2]))]);
     const s2 = gaussSolve(Gz, B2, envs);
-    deps.forEach((z, i) => map2.set(z.name, simplify(add(s1.X[i][0], s2.X ? s2.X[i][0] : ZERO))));
+    deps.forEach((z, i) => map2.set(z.name, ratsimp(simplify(add(s1.X[i][0], s2.X ? s2.X[i][0] : ZERO)))));
   }
   return { map1, map2, cons };
 }
@@ -224,6 +225,6 @@ export function exactKinematics(model, dofs) {
   }
   const map = new Map();
   for (const q of dofs.coords) map.set(q.abs.name, mul(q.sign, q.s));
-  for (const d of dofs.deps) map.set(d.name, simplify(sol.get(d.s.name)));
+  for (const d of dofs.deps) map.set(d.name, trigsimp(ratsimp(simplify(sol.get(d.s.name)))));
   return { map, cons };
 }

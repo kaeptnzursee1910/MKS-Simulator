@@ -3,7 +3,7 @@
 // Bindungsgleichungen, Federn/Dämpfer, Lasten.
 import { sym, num, add, mul, pow, MONE, ZERO, ONE, sqrt, simplify, sqrtsimp, evalNum, cos, sin } from '../cas/expr.js';
 import { paramNames } from '../cas/parse.js';
-import { TYPES, isBody, isLine, hasRotation, propExpr, ports, exactTrig, rot, portWorld, defaultParamValue } from './elements.js';
+import { TYPES, isBody, isLine, hasRotation, propExpr, propNum, ports, exactTrig, rot, portWorld, defaultParamValue } from './elements.js';
 
 export function dotTex(tex, n) {
   const acc = n === 1 ? '\\dot' : '\\ddot';
@@ -98,6 +98,31 @@ export function buildModel(sys) {
   const cons = [];
   const springs = [], dampers = [], tsprings = [], tdampers = [], loads = [], moments = [];
   const lineInfo = new Map();
+  const warnings = [];
+
+  /** Kontakt mit einer Kreisbahn (Mulde: Körper innen, Kuppe: Körper außen) */
+  function curveContact(el, b, g, nm) {
+    if (b.el.type !== 'disk' && b.el.type !== 'point') throw new Error(nm + ': Auf einer Kreisbahn können nur Scheiben und Punktmassen laufen.');
+    const rho = propExpr(g, 'rho');
+    const rhoN = propNum(g, 'rho', env, 0.5);
+    const dx = b.el.x - g.x, dy = b.el.y - g.y;
+    const sIn = Math.hypot(dx, dy) < rhoN ? 1 : -1; // +1: innen (Mulde)
+    const R = b.el.type === 'disk' ? propExpr(b.el, 'R') : ZERO;
+    const rc = add(rho, mul(-sIn, R)); // Bahnradius des Schwerpunkts
+    const beta = (Math.atan2(dy, dx) * 180) / Math.PI;
+    const [cb, sb] = exactTrig(beta, 0.5);
+    if (el.mode === 'roll') {
+      if (b.el.type !== 'disk') throw new Error('Rollen ohne Gleiten ist nur für Scheiben möglich.');
+      // Rollbedingung integriert: Bahnwinkel ψ − β = −s·R·ϑ / r_c
+      const dpsi = mul(-sIn, R, b.TH.s, pow(rc, MONE));
+      const c = cos(dpsi), sn = sin(dpsi);
+      cons.push({ expr: add(b.X.s, mul(MONE, rc, add(mul(cb, c), mul(MONE, sb, sn), mul(MONE, cb)))), label: nm + ' (Rollen auf Kreisbahn, x)', el });
+      cons.push({ expr: add(b.Y.s, mul(MONE, rc, add(mul(sb, c), mul(cb, sn), mul(MONE, sb)))), label: nm + ' (Rollen auf Kreisbahn, y)', el });
+    } else {
+      const ex = add(pow(add(mul(rc, cb), b.X.s), 2), pow(add(mul(rc, sb), b.Y.s), 2), mul(MONE, pow(rc, 2)));
+      cons.push({ expr: simplify(ex), label: nm + ' (auf Kreisbahn)', el });
+    }
+  }
 
   function elongation(el) {
     const A = anchor(el.a), B = anchor(el.b);
@@ -165,6 +190,7 @@ export function buildModel(sys) {
       case 'contact': {
         const b = bodyOf.get(el.body), g = byId.get(el.ground);
         if (!b || !g) throw new Error(nm + ': Körper oder Boden fehlt.');
+        if (g.type === 'curve') { curveContact(el, b, g, nm); break; }
         const tr = exactTrig(g.angle || 0);
         const t = tr, n = [mul(MONE, tr[1]), tr[0]];
         const ga = ((g.angle || 0) * Math.PI) / 180;
@@ -180,6 +206,10 @@ export function buildModel(sys) {
         break;
       }
       case 'rope': case 'spring': case 'damper': case 'springdamper': {
+        if (!el.a?.el || !el.b?.el) {
+          warnings.push(nm + ' hat ein freies Ende und überträgt deshalb keine Kraft – Ende an einen Körper anschließen oder ein Lager setzen.');
+          break;
+        }
         const dL = elongation(el);
         if (el.type === 'rope') cons.push({ expr: dL, label: nm + ' (Seillänge konstant)', el, line: el });
         if (el.type === 'spring' || el.type === 'springdamper') springs.push({ el, k: propExpr(el, 'k'), dL });
@@ -218,7 +248,7 @@ export function buildModel(sys) {
   const Ut = add(...tsprings.map((s) => mul(num(1, 2), s.k, pow(s.rel, 2))));
   const U = add(Ug, Us, Ut);
 
-  return { sys, env, refEnv, bodies, bodyOf, absCoords, cons, springs, dampers, tsprings, tdampers, loads, moments, g, U, Ug, lineInfo, elName };
+  return { sys, env, refEnv, warnings, bodies, bodyOf, absCoords, cons, springs, dampers, tsprings, tdampers, loads, moments, g, U, Ug, lineInfo, elName };
 }
 
 /** Numerische Jacobi-Matrix der Bindungen in der Bezugslage */

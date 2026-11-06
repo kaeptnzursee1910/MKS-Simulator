@@ -57,8 +57,8 @@
       <button class="modal-close" data-close>×</button>
       <h2>So funktioniert der MKS-Simulator</h2>
       <ol>
-        <li><b>Modell:</b> Werkzeug in der Palette wählen und auf die Zeichenfläche tippen. Körper (Klotz, Scheibe, Stab, Punktmasse) und Boden/Festpunkte frei platzieren. Lager, Seile, Federn und Dämpfer verbinden die <span class="blue">blauen Anschlusspunkte</span>. Ein Tipp ins Leere setzt einen Festpunkt (Wand).</li>
-        <li>Mit <b>Auswahl</b> verschiebt man Elemente und bearbeitet rechts bzw. unten die Parameter. Parameter sind Ausdrücke wie <code>m</code>, <code>2*r</code>, <code>J_2</code>, <code>F_0*cos(Omega*t)</code>. Ihre Zahlenwerte stehen in der Parametertabelle.</li>
+        <li><b>Modell:</b> Werkzeug in der Palette wählen und auf die Zeichenfläche tippen. Körper (Klotz, Scheibe, Stab, Punktmasse) und Boden/Festpunkte frei platzieren. Seile, Federn und Dämpfer verbinden die <span class="blue">blauen Anschlusspunkte</span>; ein Tipp ins Leere erzeugt ein <b>freies Ende</b>. Alle Lager setzt man selbst: Festlager/Festpunkt auf einen Anschlusspunkt oder ein freies Ende tippen. Stäbe werden durch Anfangs- und Endpunkt (auch schräg) gezeichnet, Kreisbahnen (Mulde/Kuppe) tragen rollende oder gleitende Scheiben und Punktmassen.</li>
+        <li>Mit <b>Auswahl</b> verschiebt man Elemente (Enden □ von Seilen/Federn lassen sich auf Anschlusspunkte ziehen) und bearbeitet rechts bzw. unten die Parameter. Parameter sind Ausdrücke wie <code>m</code>, <code>2*r</code>, <code>J_2</code>, <code>F_0*cos(Omega*t)</code>. Ihre Zahlenwerte stehen in der Parametertabelle.</li>
         <li><b>Freiheitsgrade:</b> Methode (Lagrange 1. Art, 2. Art, d'Alembert-Lagrange) und Modus (linearisiert / nichtlinear) wählen, dann je Freiheitsgrad Körper, Koordinate (x, y, φ) und positive Richtung festlegen.</li>
         <li><b>Gleichungen:</b> Die Herleitung erscheint mit allen Zwischenschritten.</li>
         <li><b>Simulation:</b> Anfangswerte, Integrationsverfahren und Schrittweite wählen und die Bewegung abspielen.</li>

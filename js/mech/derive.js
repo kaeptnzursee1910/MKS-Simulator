@@ -1,6 +1,6 @@
 // Herleitung der Bewegungsgleichungen: Lagrange 1. Art, Lagrange 2. Art, d'Alembert-Lagrange
 import {
-  fn, leadingNegative, add, mul, pow, MONE, ZERO, num, sym, diff, subs, simplify, sqrtsimp, series, truncate, isZero, termsOf, freeSyms, evalNum, info,
+  fn, ratsimp, trigsimp, leadingNegative, add, mul, pow, MONE, ZERO, num, sym, diff, subs, simplify, sqrtsimp, series, truncate, isZero, termsOf, freeSyms, evalNum, info,
 } from '../cas/expr.js';
 import { tex, eqTex, matTex as matTex0, vecTex as vecTex0 } from '../cas/latex.js';
 import { paramSym } from '../cas/parse.js';
@@ -27,7 +27,7 @@ export function ddt(e, coords) {
   return add(...parts);
 }
 const allVars = (coords) => coords.flatMap((c) => [c.s, c.d, c.dd]);
-const S = (e) => simplify(e);
+const S = (e) => trigsimp(ratsimp(simplify(e)));
 
 // Abkürzungen ℓ für aktuelle Längen (Wurzelausdrücke) in der Anzeige
 let ABBR = new Map();
@@ -153,6 +153,7 @@ function introRows(doc, model, dofs, lin, an) {
         : (q.sign === 1 ? 'positiv nach oben' : 'positiv nach unten');
     doc.math(q.tex + ' = ' + (q.sign === 1 ? '' : '-') + q.abs.tex, `${d.coord === 'phi' ? 'Drehwinkel' : 'Verschiebung'} von Körper ${model.bodies.find((b) => [b.X, b.Y, b.TH].includes(q.abs)).label}, ${dir}`);
   }
+  for (const w of model.warnings || []) doc.text('Hinweis: ' + w);
   if (lin) doc.text('Linearisierung: kleine Auslenkungen um die gezeichnete Lage q = 0. Energien werden bis zur 2. Ordnung entwickelt, die Bewegungsgleichungen sind damit linear.');
 }
 
@@ -189,7 +190,7 @@ function deriveL2DAL(model, dofs, kin, lin, method, an) {
   }
   if (kin.cons.length) {
     doc.text('Verwendete Bindungen:');
-    for (const c of kin.cons) doc.math(TX(lin ? truncate(c.g, qs.concat(dofs.deps.map((d) => d.s)), 1, 1) : c.g) + ' = 0', c.label);
+    for (const c of kin.cons) doc.math(TX(S(lin ? truncate(c.g, qs.concat(dofs.deps.map((d) => d.s)), 1, 1) : c.g)) + ' = 0', c.label);
   }
 
   doc.sec('Geschwindigkeiten');

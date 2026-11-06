@@ -630,3 +630,83 @@ export function sqrtsimp(e, refEnv) {
     default: return e;
   }
 }
+
+// ------------------------------------------- Kürzen rationaler Ausdrücke
+/** Polynomdivision N / B, B linear in einer Variablen; liefert Quotient oder null */
+function opaque(e, v, store) {
+  // nicht-polynomiale Teilausdrücke mit v durch Platzhalter ersetzen
+  if (!has(e, v)) return e;
+  if (e.t === 'fn' || (e.t === 'pow' && !(isInt(e.exp) && e.exp.n > 0))) {
+    let k = store.byKey.get(e.key);
+    if (!k) { k = sym('__op' + (store.n++), { kind: 'param' }); store.byKey.set(e.key, k); store.back.set(k.name, e); }
+    return k;
+  }
+  if (e.t === 'add') return add(...e.terms.map((x) => opaque(x, v, store)));
+  if (e.t === 'mul') return mul(...e.factors.map((x) => opaque(x, v, store)));
+  if (e.t === 'pow') return pow(opaque(e.base, v, store), e.exp);
+  return e;
+}
+function polyDivide(N0, B) {
+  for (const v of freeSyms(B)) {
+    const store = { n: 0, byKey: new Map(), back: new Map() };
+    const N = opaque(N0, v, store);
+    const restore = (x) => (store.back.size ? subs(x, store.back) : x);
+    const a = simplify(diff(B, v));
+    if (isZero(a) || has(a, v)) continue;
+    const b = simplify(subs(B, new Map([[v, ZERO]])));
+    // Koeffizienten von N in v
+    const coefs = [];
+    let f = N, fact = 1;
+    const zero = new Map([[v, ZERO]]);
+    for (let k = 0; k <= 10; k++) {
+      if (k > 0) { f = simplify(diff(f, v)); fact *= k; }
+      if (isZero(f)) break;
+      coefs.push(simplify(mul(num(1, fact), subs(f, zero))));
+      if (k === 10) return null;
+    }
+    const n = coefs.length - 1;
+    if (n < 1) continue;
+    const ia = pow(a, MONE);
+    const q = new Array(n);
+    let carry = coefs[n];
+    for (let i = n - 1; i >= 0; i--) {
+      q[i] = simplify(mul(carry, ia));
+      carry = simplify(add(coefs[i], mul(MONE, b, q[i])));
+    }
+    if (!isZero(carry)) continue;
+    return simplify(restore(add(...q.map((c, i) => mul(c, pow(sym(v), i))))));
+  }
+  return null;
+}
+/** Fasst Summanden mit gleichem Nenner zusammen und kürzt (Nenner: Potenzen von Summen) */
+export function ratsimp(e) {
+  if (e.t !== 'add') return e;
+  const groups = new Map();
+  for (const t of e.terms) {
+    const fs = t.t === 'mul' ? t.factors : [t];
+    const den = fs.filter((f) => f.t === 'pow' && f.base.t === 'add' && isInt(f.exp) && f.exp.n < 0);
+    const key = den.map((f) => f.key).sort().join('|');
+    if (!groups.has(key)) groups.set(key, { den, terms: [] });
+    groups.get(key).terms.push(t);
+  }
+  if (groups.size === 1 && groups.has('')) return e;
+  let changed = false;
+  const out = [];
+  for (const { den, terms } of groups.values()) {
+    if (!den.length) { out.push(...terms); continue; }
+    const denKeys = new Set(den.map((f) => f.key));
+    let N = expand(add(...terms.map((t) => mul(...(t.t === 'mul' ? t.factors : [t]).filter((f) => !denKeys.has(f.key))))));
+    const rest = [];
+    for (const f of den) {
+      let k = -f.exp.n;
+      while (k > 0) {
+        const q = isZero(N) ? N : polyDivide(N, f.base);
+        if (!q) break;
+        N = q; k--; changed = true;
+      }
+      if (k > 0) rest.push(pow(f.base, num(-k)));
+    }
+    out.push(expand(mul(N, ...rest)));
+  }
+  return changed ? add(...out) : e;
+}

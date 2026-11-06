@@ -8,6 +8,7 @@ export const TYPES = {
   rod: { name: 'Stab', body: true },
   point: { name: 'Punktmasse', body: true },
   ground: { name: 'Boden / Bahn' },
+  curve: { name: 'Kreisbahn' },
   fix: { name: 'Festpunkt / Wand' },
   pin: { name: 'Festlager' },
   roller: { name: 'Loslager (Gleitlager)' },
@@ -149,6 +150,7 @@ export function defaultParamValue(name) {
   if (b === 'd') return 2;
   if (b === 'dt') return 0.05;
   if (b === 'r' || b === 'R') return 0.1;
+  if (b === 'rho') return 0.5;
   if (b === 'l' || b === 'L') return 0.5;
   if (b === 'a' || b === 'b' || b === 'h') return 0.2;
   if (b === 'F') return 10;

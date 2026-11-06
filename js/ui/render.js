@@ -105,18 +105,24 @@ export function makeView(view, W, H) {
 /** Bezugsdaten einer Linien-Verbindung: wird das Seil aufgewickelt? */
 export function lineGeometry(sys, el, env) {
   const byId = (id) => sys.elements.find((e) => e.id === id);
-  const A = byId(el.a?.el), B = byId(el.b?.el);
-  if (!A || !B) return null;
-  const pa = portWorld(A, el.a.port, env), pb = portWorld(B, el.b.port, env);
+  // Ende: an Körper/Festpunkt angeschlossen ({el, port}) oder frei ({x, y})
+  const end = (ref) => {
+    if (ref?.el) { const X = byId(ref.el); return X ? { X, p: portWorld(X, ref.port, env) } : null; }
+    if (ref && Number.isFinite(ref.x)) return { X: null, p: [ref.x, ref.y] };
+    return null;
+  };
+  const ea = end(el.a), eb = end(el.b);
+  if (!ea || !eb) return null;
+  const pa = ea.p, pb = eb.p;
   const e = norm([pb[0] - pa[0], pb[1] - pa[1]]);
   const wound = (X, ref) => {
-    if (X.type !== 'disk') return false;
+    if (!X || X.type !== 'disk') return false;
     const p = findPort(X, ref.port, env);
     if (!p || !p.rim) return false;
     const rn = Math.hypot(p.w[0], p.w[1]) || 1;
     return Math.abs((p.w[0] * e[0] + p.w[1] * e[1]) / rn) < 0.15;
   };
-  return { A, B, wa: wound(A, el.a), wb: wound(B, el.b), len: Math.hypot(pb[0] - pa[0], pb[1] - pa[1]) };
+  return { A: ea.X, B: eb.X, pa, pb, wa: wound(ea.X, el.a), wb: wound(eb.X, el.b), len: Math.hypot(pb[0] - pa[0], pb[1] - pa[1]) };
 }
 
 function anchorPos(el, portId, env, d, wound) {
@@ -171,8 +177,31 @@ export function renderScene(sys, V, opts = {}) {
           out.ground += g0 + seg(p0, p1, 'transparent', 14) + seg(p0, p1, c, 1.6) + hatch(p0, p1, n, c) + '</g>';
           break;
         }
+        case 'curve': {
+          const C = [el.x, el.y], rho = propNum(el, 'rho', env, 0.5);
+          let a0 = el.a0 ?? 200, a1 = el.a1 ?? 340;
+          if (a1 < a0) a1 += 360;
+          const N = Math.max(8, Math.ceil(((a1 - a0) / 360) * 2 * Math.PI * rho * V.s / 6));
+          const pts = [];
+          for (let i = 0; i <= N; i++) { const a = ((a0 + ((a1 - a0) * i) / N) * Math.PI) / 180; pts.push([C[0] + rho * Math.cos(a), C[1] + rho * Math.sin(a)]); }
+          const sp = pts.map((p) => V.S(...p));
+          let h = '';
+          const step = Math.max(1, Math.round(N / Math.max(4, ((a1 - a0) / 360) * 2 * Math.PI * rho * V.s / 10)));
+          for (let i = 0; i < N; i += step) {
+            const a = ((a0 + ((a1 - a0) * i) / N) * Math.PI) / 180;
+            const out_ = [Math.cos(a), -Math.sin(a)];
+            const side = el.concave === false ? [-out_[0], -out_[1]] : out_;
+            const tan = [-out_[1], out_[0]];
+            const dir = norm(add2(side, tan, 0.9));
+            h += seg(sp[i], add2(sp[i], dir, 9), c, 1.1);
+          }
+          const d = sp.map((p, i) => (i ? 'L' : 'M') + f1(p[0]) + ' ' + f1(p[1])).join(' ');
+          out.ground += g0 + `<path d="${d}" stroke="transparent" stroke-width="14" fill="none"/><path d="${d}" stroke="${c}" stroke-width="1.6" fill="none"/>` + h + '</g>';
+          break;
+        }
         case 'fix': {
           const P = V.S(el.x, el.y);
+          if (el.style === 'pin') { out.supports += g0 + drawSupport(P, V.dir(el.angle ?? -90), false, c) + '</g>'; break; }
           const n = V.dir(el.angle || 0), t = perp(n);
           const a = add2(P, t, 16), b = add2(P, t, -16);
           out.ground += g0 + circ(P, 12, 'transparent', 1, 'transparent') + seg(a, b, c, 1.8) + hatch(b, a, [-n[0], -n[1]], c, 8, 8) + '</g>';
@@ -202,6 +231,21 @@ export function renderScene(sys, V, opts = {}) {
         case 'contact': {
           const B = byId.get(el.body), G = byId.get(el.ground);
           if (!B || !G) break;
+          if (G.type === 'curve') {
+            const d = D(B.id) || {};
+            const S = [B.x + (d.u || 0), B.y + (d.v || 0)];
+            const u = norm([S[0] - G.x, S[1] - G.y]);
+            const rho = propNum(G, 'rho', env, 0.5);
+            const R = B.type === 'disk' ? propNum(B, 'R', env, 0.1) : 0;
+            const inside = Math.hypot(B.x - G.x, B.y - G.y) < rho;
+            const cpw = [S[0] + (inside ? R : -R) * u[0], S[1] + (inside ? R : -R) * u[1]];
+            const cp = V.S(...cpw);
+            const t = [-u[1], -u[0]];
+            const mark = el.mode === 'roll' ? circ(cp, 2.2, c, 1, c) : seg(add2(cp, [u[1], u[0]], -7), add2(cp, [u[1], u[0]], 7), c, 2.6);
+            void t;
+            out.supports += g0 + circ(cp, 8, 'transparent', 1, 'transparent') + mark + '</g>';
+            break;
+          }
           // kleine Markierung am Berührpunkt
           const d = D(B.id) || {};
           const ga = G.angle || 0;
@@ -216,9 +260,17 @@ export function renderScene(sys, V, opts = {}) {
         case 'rope': case 'spring': case 'damper': case 'springdamper': {
           const geo = lineGeometry(sys, el, env);
           if (!geo) break;
-          const pa = V.S(...anchorPos(geo.A, el.a.port, env, D(geo.A.id), geo.wa));
-          const pb = V.S(...anchorPos(geo.B, el.b.port, env, D(geo.B.id), geo.wb));
-          out.lines += g0 + seg(pa, pb, 'transparent', 14) + drawLine(el, pa, pb, c) + '</g>';
+          const pa = V.S(...(geo.A ? anchorPos(geo.A, el.a.port, env, D(geo.A.id), geo.wa) : geo.pa));
+          const pb = V.S(...(geo.B ? anchorPos(geo.B, el.b.port, env, D(geo.B.id), geo.wb) : geo.pb));
+          let ends = '';
+          if (!geo.A) ends += circ(pa, 3.5, c, 1.3, '#fff');
+          if (!geo.B) ends += circ(pb, 3.5, c, 1.3, '#fff');
+          out.lines += g0 + seg(pa, pb, 'transparent', 14) + drawLine(el, pa, pb, c) + ends + '</g>';
+          if (el.id === sel && opts.handles) {
+            for (const [k, P] of [['a', pa], ['b', pb]]) {
+              out.overlay += `<g data-handle="${el.id}|${k}"><circle cx="${f1(P[0])}" cy="${f1(P[1])}" r="14" fill="transparent"/><rect x="${f1(P[0] - 5)}" y="${f1(P[1] - 5)}" width="10" height="10" fill="#fff" stroke="${ACC}" stroke-width="1.8"/></g>`;
+            }
+          }
           break;
         }
         case 'tspring': case 'tdamper': {
@@ -459,6 +511,7 @@ export function paletteIcon(tool) {
     case 'rod': return W(poly([[7, 24], [33, 6], [35, 9], [9, 27]], c, 1.3, '#fff', true));
     case 'point': return W(circ([20, 15], 5, c, 1.4, c));
     case 'ground': return W(seg([4, 14], [36, 14], c, 1.6) + hatch([4, 14], [36, 14], [0, 1], c, 6, 7));
+    case 'curve': return W('<path d="M4 6 A17 17 0 0 0 36 6" fill="none" stroke="' + c + '" stroke-width="1.6"/>' + [[8, 13], [14, 18], [20, 20], [26, 18], [32, 13]].map(([x, y]) => seg([x, y], [x - 3, y + 5], c, 1)).join(''));
     case 'fix': return W(seg([16, 5], [16, 25], c, 1.8) + hatch([16, 25], [16, 5], [-1, 0], c, 5, 6) + seg([16, 15], [34, 15], c, 1.2));
     case 'pin': return W(drawSupport([20, 6], [0, 1], false, c, 1));
     case 'roller': return W(drawSupport([20, 5], [0, 1], true, c, 1));

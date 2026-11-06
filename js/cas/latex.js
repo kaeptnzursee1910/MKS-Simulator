@@ -134,7 +134,7 @@ function mulTex(e) {
     return sign + (pre ? pre + (/^[0-9{]/.test(body) || /^\\sqrt/.test(body) ? ' \\cdot ' : ' ') : '') + body;
   }
   const top = (cn !== '1' ? cn + (numer.length ? ' ' : '') : '') + fTex(numer);
-  const bot = (cd !== '1' ? cd + ' ' : '') + fTex(denom);
+  const bot = (cd !== '1' ? cd + ' ' : '') + (denom.length === 1 && denom[0].t === 'add' && cd === '1' ? tex(denom[0]) : fTex(denom));
   return sign + '\\frac{' + (top || '1') + '}{' + bot + '}';
 }
 

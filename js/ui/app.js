@@ -117,7 +117,7 @@ function nextIndex(prefix) {
 const TOOLS = [
   ['Bearbeiten', [['select', 'Auswahl'], ['delete', 'Löschen']]],
   ['Körper', [['block', 'Klotz'], ['disk', 'Scheibe'], ['stepdisk', 'Stufen­rolle'], ['rod', 'Stab'], ['point', 'Punkt­masse']]],
-  ['Umgebung', [['ground', 'Boden'], ['fix', 'Fest­punkt']]],
+  ['Umgebung', [['ground', 'Boden'], ['curve', 'Kreis­bahn'], ['fix', 'Fest­punkt']]],
   ['Lager', [['pin', 'Fest­lager'], ['roller', 'Los­lager'], ['hinge', 'Gelenk'], ['roll', 'Rollen'], ['slide', 'Gleiten']]],
   ['Verbinder', [['rope', 'Seil'], ['spring', 'Feder'], ['damper', 'Dämpfer'], ['springdamper', 'Feder ∥ Dämpfer'], ['tspring', 'Dreh­feder'], ['tdamper', 'Dreh­dämpfer']]],
   ['Lasten', [['force', 'Kraft'], ['moment', 'Moment']]],
@@ -130,19 +130,20 @@ const HINTS = {
   block: 'Auf die Zeichenfläche tippen, um einen Klotz zu platzieren.',
   disk: 'Auf die Zeichenfläche tippen, um eine Scheibe zu platzieren.',
   stepdisk: 'Auf die Zeichenfläche tippen, um eine Stufenrolle (zwei Radien) zu platzieren.',
-  rod: 'Auf die Zeichenfläche tippen, um einen Stab zu platzieren.',
+  rod: 'Anfangs- und Endpunkt des Stabs antippen (beliebig schräg, Winkel in 15°-Schritten).',
   point: 'Auf die Zeichenfläche tippen, um eine Punktmasse zu platzieren.',
   ground: 'Auf die Zeichenfläche tippen, um einen Boden (Bahn) zu platzieren.',
-  fix: 'Auf die Zeichenfläche tippen, um einen Festpunkt (Wand) zu platzieren.',
-  pin: 'Blauen Anschlusspunkt eines Körpers antippen → Festlager.',
+  curve: 'Tippen setzt den tiefsten Punkt einer Kreismulde. Radius, Bogen und Mulde/Kuppe im Panel einstellen.',
+  fix: 'Auf freie Fläche (Wand) oder auf ein freies Seil-/Federende tippen.',
+  pin: 'Anschlusspunkt eines Körpers oder freies Seil-/Federende antippen → Festlager.',
   roller: 'Blauen Anschlusspunkt antippen → Loslager (Richtung danach im Panel einstellen).',
   hinge: 'Anschlusspunkt am ersten Körper, dann am zweiten Körper antippen.',
-  roll: 'Scheibe antippen → rollt ohne Gleiten auf dem nächsten Boden.',
-  slide: 'Körper antippen → gleitet reibungsfrei auf dem nächsten Boden (Führung).',
-  rope: 'Ersten, dann zweiten Anschlusspunkt antippen (leere Fläche = Festpunkt).',
-  spring: 'Ersten, dann zweiten Anschlusspunkt antippen (leere Fläche = Festpunkt).',
-  damper: 'Ersten, dann zweiten Anschlusspunkt antippen (leere Fläche = Festpunkt).',
-  springdamper: 'Ersten, dann zweiten Anschlusspunkt antippen (leere Fläche = Festpunkt).',
+  roll: 'Scheibe antippen → rollt ohne Gleiten auf dem nächsten Boden bzw. der nächsten Kreisbahn.',
+  slide: 'Körper antippen → gleitet reibungsfrei auf dem nächsten Boden bzw. der nächsten Kreisbahn.',
+  rope: 'Ersten, dann zweiten Punkt antippen: Anschlusspunkt = verbunden, leere Fläche = freies Ende.',
+  spring: 'Ersten, dann zweiten Punkt antippen: Anschlusspunkt = verbunden, leere Fläche = freies Ende.',
+  damper: 'Ersten, dann zweiten Punkt antippen: Anschlusspunkt = verbunden, leere Fläche = freies Ende.',
+  springdamper: 'Ersten, dann zweiten Punkt antippen: Anschlusspunkt = verbunden, leere Fläche = freies Ende.',
   tspring: 'Drehbaren Körper antippen, dann zweiten Körper oder leere Fläche (Umgebung).',
   tdamper: 'Drehbaren Körper antippen, dann zweiten Körper oder leere Fläche (Umgebung).',
   force: 'Anschlusspunkt antippen, an dem die Kraft angreift.',
@@ -170,7 +171,8 @@ function updateHint() {
   if (state.step === 'model') {
     h = HINTS[state.tool] || '';
     if (state.pending) {
-      if (state.pending.kind === 'line') h = 'Zweiten Anschlusspunkt antippen (leere Fläche = Festpunkt). Esc bricht ab.';
+      if (state.pending.kind === 'line') h = 'Zweiten Punkt antippen (leere Fläche = freies Ende). Esc bricht ab.';
+      if (state.pending.kind === 'rod') h = 'Endpunkt des Stabs antippen.';
       if (state.pending.kind === 'hinge') h = 'Anschlusspunkt am zweiten Körper antippen.';
       if (state.pending.kind === 'torsion') h = 'Zweiten Körper antippen oder leere Fläche (Umgebung).';
     }
@@ -205,15 +207,17 @@ function draw() {
     selected: step === 'model' || step === 'dof' ? state.sel : null,
     grid: step === 'model',
     showDofs: step !== 'model',
-    showPorts: step === 'model' && (PORT_TOOLS.has(state.tool) || state.pending?.kind === 'line'),
+    showPorts: step === 'model' && (PORT_TOOLS.has(state.tool) || state.pending?.kind === 'line' || gesture?.kind === 'handle'),
     hotPort: state.hotPort,
     step,
   };
   if (state.pending?.kind === 'line' && state.pointerW) {
     const a = state.pending.a;
-    const el = byId(a.el);
-    if (el) opts.preview = [portWorld(el, a.port, opts.env), state.pointerW];
+    const el = a.el ? byId(a.el) : null;
+    opts.preview = [el ? portWorld(el, a.port, opts.env) : [a.x, a.y], state.pointerW];
   }
+  if (state.pending?.kind === 'rod' && state.pointerW) opts.preview = [state.pending.p, state.pointerW];
+  opts.handles = step === 'model' && state.tool === 'select';
   if (step === 'sim' && state.simOut) opts.disp = currentDisp();
   svg.innerHTML = renderScene(state.sys, V, opts);
 }
@@ -288,21 +292,9 @@ function createFix(w, towards) {
   state.sys.elements.push(el);
   return el;
 }
-function finishLine(a, b, wB) {
-  const e = env();
-  let A = byId(a.el);
-  let B = b ? byId(b.el) : null;
-  if (!B) {
-    const pa = portWorld(A, a.port, e);
-    B = createFix(wB, pa);
-    b = { el: B.id, port: 'c' };
-  }
-  if (A.type === 'fix' && A.autoAngle) {
-    const pb = portWorld(B, b.port, e);
-    A.angle = Math.round((Math.atan2(pb[1] - A.y, pb[0] - A.x) * 180) / Math.PI / 15) * 15;
-    delete A.autoAngle;
-  }
-  if (a.el === b.el) { toast('Beide Enden liegen am selben Element.'); return null; }
+/** Seil/Feder/Dämpfer zwischen zwei Enden; ein Ende ist ein Anschlusspunkt {el, port} oder frei {x, y} */
+function finishLine(a, b) {
+  if (a.el && b.el && a.el === b.el) { toast('Beide Enden liegen am selben Element.'); return null; }
   const t = state.tool;
   const el = { id: newId('l'), type: t, a, b, props: {}, L0auto: true };
   if (t === 'spring' || t === 'springdamper') el.props.k = 'k_' + nextIndex('k');
@@ -313,44 +305,92 @@ function finishLine(a, b, wB) {
   el.props.L0 = String(round3(L));
   return el;
 }
+/** freies Seil-/Federende in der Nähe eines Bildschirmpunkts */
+function freeEndAt(sx, sy, maxDist = 18) {
+  let best = null, bd = maxDist;
+  for (const el of state.sys.elements) {
+    if (!isLine(el)) continue;
+    for (const k of ['a', 'b']) {
+      const r = el[k];
+      if (!r || r.el || !Number.isFinite(r.x)) continue;
+      const P = V.S(r.x, r.y);
+      const d = Math.hypot(P[0] - sx, P[1] - sy);
+      if (d < bd) { bd = d; best = { line: el, end: k }; }
+    }
+  }
+  return best;
+}
+/** Lager (Festlager-Symbol oder Wand) an einem freien Ende anbringen */
+function supportFreeEnd(fe, style) {
+  const r = fe.line[fe.end];
+  const other = fe.line[fe.end === 'a' ? 'b' : 'a'];
+  const f = { id: newId('w'), type: 'fix', x: r.x, y: r.y, angle: -90 };
+  if (style === 'pin') f.style = 'pin';
+  else {
+    const op = other?.el ? portWorld(byId(other.el), other.port, env()) : [other.x, other.y];
+    f.angle = Math.round((Math.atan2(op[1] - r.y, op[0] - r.x) * 180) / Math.PI / 15) * 15;
+  }
+  state.sys.elements.push(f);
+  fe.line[fe.end] = { el: f.id, port: 'c' };
+  return f;
+}
 function updateAutoL0() {
   for (const el of state.sys.elements) if (isLine(el) && el.L0auto) {
     const L = lineLength(el);
     if (L > 1e-6) el.props.L0 = String(round3(L));
   }
 }
+function groundDistance(body, g) {
+  if (g.type === 'curve') return Math.abs(Math.hypot(body.x - g.x, body.y - g.y) - propNum(g, 'rho', env(), 0.5));
+  const a = ((g.angle || 0) * Math.PI) / 180;
+  return Math.abs(-Math.sin(a) * (body.x - g.x) + Math.cos(a) * (body.y - g.y));
+}
 function nearestGround(body) {
   let best = null, bd = Infinity;
-  for (const g of state.sys.elements.filter((x) => x.type === 'ground')) {
-    const a = ((g.angle || 0) * Math.PI) / 180;
-    const d = Math.abs(-Math.sin(a) * (body.x - g.x) + Math.cos(a) * (body.y - g.y));
+  for (const g of state.sys.elements.filter((x) => x.type === 'ground' || x.type === 'curve')) {
+    const d = groundDistance(body, g);
     if (d < bd) { bd = d; best = g; }
   }
   return best;
 }
 function placeOnGround(body, g) {
   const e = env();
+  if (g.type === 'curve') {
+    const rho = propNum(g, 'rho', e, 0.5);
+    const R = body.type === 'disk' ? propNum(body, 'R', e, 0.1) : 0;
+    const dx = body.x - g.x, dy = body.y - g.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const inside = g.concave !== false;
+    const rc = inside ? rho - R : rho + R;
+    // Winkel auf 15° runden, damit die Geometrie exakt bleibt
+    // Winkel auf 30°/45°-Raster runden, damit die Geometrie exakt und übersichtlich bleibt
+    const raw = (Math.atan2(dy, dx) * 180) / Math.PI;
+    const cands = []; for (let k = -12; k <= 12; k++) { cands.push(k * 30, k * 45); }
+    const beta = (cands.reduce((b, c) => (Math.abs(c - raw) < Math.abs(b - raw) ? c : b), 0) * Math.PI) / 180;
+    void dist;
+    body.x = round6(g.x + rc * Math.cos(beta));
+    body.y = round6(g.y + rc * Math.sin(beta));
+    return;
+  }
   const a = ((g.angle || 0) * Math.PI) / 180;
   const n = [-Math.sin(a), Math.cos(a)];
   let side = n[0] * (body.x - g.x) + n[1] * (body.y - g.y) >= 0 ? 1 : -1;
   const h = body.type === 'disk' ? propNum(body, 'R', e, 0.1) : body.type === 'block' ? propNum(body, 'b', e, 0.1) / 2 : 0;
   const t = [Math.cos(a), Math.sin(a)];
   const s = t[0] * (body.x - g.x) + t[1] * (body.y - g.y);
-  body.x = round3(g.x + s * t[0] + side * h * n[0]);
-  body.y = round3(g.y + s * t[1] + side * h * n[1]);
+  body.x = round6(g.x + s * t[0] + side * h * n[0]);
+  body.y = round6(g.y + s * t[1] + side * h * n[1]);
   if (body.type === 'block') body.angle = g.angle || 0;
 }
+const round6 = (v) => Math.round(v * 1e6) / 1e6;
 function contactTool(body, mode) {
   if (mode === 'roll' && body.type !== 'disk') { toast('Rollen ohne Gleiten geht nur mit Scheiben.'); return; }
-  if (body.type === 'rod' || body.type === 'point') { toast('Kontakt nur für Klotz oder Scheibe.'); return; }
+  if (body.type === 'rod') { toast('Kontakt nur für Klotz, Scheibe oder Punktmasse.'); return; }
   if (state.sys.elements.some((x) => x.type === 'contact' && x.body === body.id)) { toast('Dieser Körper hat schon einen Bodenkontakt.'); return; }
-  let g = nearestGround(body);
-  if (!g) {
-    const e = env();
-    const h = body.type === 'disk' ? propNum(body, 'R', e, 0.1) : propNum(body, 'b', e, 0.1) / 2;
-    g = { id: newId('g'), type: 'ground', x: body.x, y: round3(body.y - h), angle: 0, len: 1.0 };
-    state.sys.elements.push(g);
-  }
+  const g = nearestGround(body);
+  if (!g) { toast('Bitte zuerst einen Boden oder eine Kreisbahn zeichnen.'); return; }
+  if (g.type === 'curve' && body.type === 'block') { toast('Auf einer Kreisbahn laufen nur Scheiben und Punktmassen.'); return; }
+  if (g.type !== 'curve' && body.type === 'point') { toast('Punktmassen können nur auf einer Kreisbahn geführt werden (auf geradem Boden: Loslager verwenden).'); return; }
   placeOnGround(body, g);
   const c = { id: newId('c'), type: 'contact', body: body.id, ground: g.id, mode };
   state.sys.elements.push(c);
@@ -358,6 +398,18 @@ function contactTool(body, mode) {
 }
 function deleteElement(id) {
   const del = new Set([id]);
+  // Seile/Federn bleiben erhalten: angeschlossene Enden werden frei
+  const e0 = env();
+  for (const el of state.sys.elements) {
+    if (!isLine(el) || el.id === id) continue;
+    for (const k of ['a', 'b']) {
+      if (el[k]?.el === id) {
+        const X = byId(id);
+        const p = portWorld(X, el[k].port, e0);
+        el[k] = { x: round3(p[0]), y: round3(p[1]) };
+      }
+    }
+  }
   let grew = true;
   while (grew) {
     grew = false;
@@ -391,7 +443,33 @@ function tap(sx, sy, target) {
   switch (t) {
     case 'select': state.sel = elG ? elG.dataset.id : null; break;
     case 'delete': if (elG) deleteElement(elG.dataset.id); return;
-    case 'block': case 'disk': case 'stepdisk': case 'rod': case 'point': {
+    case 'rod': {
+      if (!state.pending) { state.pending = { kind: 'rod', p: ws }; state.pointerW = w; updateHint(); draw(); return; }
+      const p0 = state.pending.p;
+      state.pending = null;
+      let L = Math.hypot(ws[0] - p0[0], ws[1] - p0[1]);
+      let ang = 90;
+      if (L < 0.04) L = 0.4;
+      else ang = Math.round((Math.atan2(ws[1] - p0[1], ws[0] - p0[0]) * 180) / Math.PI / 15) * 15;
+      L = Math.max(0.05, Math.round(L / 0.05) * 0.05);
+      const el = createBody('rod', p0);
+      const a = (ang * Math.PI) / 180;
+      el.angle = ang;
+      el.x = round6(p0[0] + (L / 2) * Math.cos(a));
+      el.y = round6(p0[1] + (L / 2) * Math.sin(a));
+      const ln = 'l_' + el.label;
+      if (state.sys.params[ln] === undefined || state.sys.params[ln] === 0.4) state.sys.params[ln] = round3(L);
+      state.sel = el.id; setTool('select');
+      break;
+    }
+    case 'curve': {
+      const i = nextIndex('rho');
+      const el = { id: newId('k'), type: 'curve', x: ws[0], y: round3(ws[1] + 0.5), a0: 200, a1: 340, concave: true, props: { rho: 'rho_' + i } };
+      addParamDefaults({ ['rho_' + i]: 0.5 });
+      state.sys.elements.push(el); state.sel = el.id; setTool('select');
+      break;
+    }
+    case 'block': case 'disk': case 'stepdisk': case 'point': {
       const el = createBody(t, ws);
       state.sel = el.id; setTool('select');
       break;
@@ -402,13 +480,20 @@ function tap(sx, sy, target) {
       break;
     }
     case 'fix': {
+      const fe = freeEndAt(sx, sy);
+      if (fe) { state.sel = supportFreeEnd(fe, 'wall').id; break; }
       const el = createFix(ws); el.angle = 0;
       state.sel = el.id; setTool('select');
       break;
     }
     case 'pin': case 'roller': {
       const p = portAt(sx, sy, 20, isBody);
-      if (!p) { toast('Bitte einen blauen Anschlusspunkt eines Körpers antippen.'); return; }
+      if (!p) {
+        const fe = freeEndAt(sx, sy);
+        if (fe && t === 'pin') { state.sel = supportFreeEnd(fe, 'pin').id; break; }
+        if (fe) { toast('Ein freies Seil-/Federende ist masselos und kann nicht verschieblich gelagert werden – Festlager verwenden.'); return; }
+        toast('Bitte einen blauen Anschlusspunkt eines Körpers oder ein freies Seil-/Federende antippen.'); return;
+      }
       // Lagerrichtung: vom Körpermittelpunkt zum Anschlusspunkt (sonst nach unten)
       const B = byId(p.el), pw = portWorld(B, p.port, env());
       const dx = pw[0] - B.x, dy = pw[1] - B.y;
@@ -438,13 +523,13 @@ function tap(sx, sy, target) {
     }
     case 'rope': case 'spring': case 'damper': case 'springdamper': {
       const p = portAt(sx, sy, 18);
+      const endRef = p || { x: ws[0], y: ws[1] };
       if (!state.pending) {
-        if (p) state.pending = { kind: 'line', a: p };
-        else { const f = createFix(ws); f.autoAngle = true; state.pending = { kind: 'line', a: { el: f.id, port: 'c' } }; }
+        state.pending = { kind: 'line', a: endRef };
         state.pointerW = w;
-        updateHint(); changed(); return;
+        updateHint(); draw(); return;
       }
-      const el = finishLine(state.pending.a, p, ws);
+      const el = finishLine(state.pending.a, endRef);
       state.pending = null;
       if (el) state.sel = el.id;
       break;
@@ -495,6 +580,12 @@ svg.addEventListener('pointerdown', (e) => {
     gesture = { kind: 'pinch', d0: Math.hypot(a[0] - b[0], a[1] - b[1]), view0: { ...state.view }, mid0: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] };
     return;
   }
+  const hG = e.target.closest?.('[data-handle]');
+  if (hG && state.step === 'model' && state.tool === 'select') {
+    const [lid, k] = hG.dataset.handle.split('|');
+    gesture = { kind: 'handle', line: byId(lid), end: k, sx, sy, moved: false };
+    return;
+  }
   const elG = e.target.closest?.('[data-id]');
   const el = elG ? byId(elG.dataset.id) : null;
   const draggable = state.step === 'model' && state.tool === 'select' && el && (isBody(el) || el.type === 'ground' || el.type === 'fix');
@@ -512,6 +603,16 @@ svg.addEventListener('pointermove', (e) => {
     const v0 = makeView(gesture.view0, V.W, V.H);
     const wm = v0.toWorld(...gesture.mid0);
     state.view = { s, cx: wm[0] - (mid[0] - V.W / 2) / s, cy: wm[1] + (mid[1] - V.H / 2) / s };
+    draw();
+    return;
+  }
+  if (gesture?.kind === 'handle') {
+    if (Math.hypot(sx - gesture.sx, sy - gesture.sy) > 3) gesture.moved = true;
+    const hp = portAt(sx, sy, 18, (x) => !gesture.line[gesture.end === 'a' ? 'b' : 'a']?.el || x.id !== gesture.line[gesture.end === 'a' ? 'b' : 'a'].el);
+    const w = V.toWorld(sx, sy);
+    gesture.line[gesture.end] = hp || { x: round3(snapV(w[0], 0.025)), y: round3(snapV(w[1], 0.025)) };
+    state.hotPort = hp ? hp.el + '|' + hp.port : null;
+    updateAutoL0();
     draw();
     return;
   }
@@ -543,6 +644,7 @@ svg.addEventListener('pointermove', (e) => {
 function endPointer(e) {
   pointers.delete(e.pointerId);
   if (gesture?.kind === 'pinch') { if (pointers.size === 0) { gesture = null; save(); } return; }
+  if (gesture?.kind === 'handle') { gesture = null; state.hotPort = null; changed(); renderPanel(); return; }
   if (gesture?.kind === 'down') {
     const g = gesture;
     gesture = null;
@@ -575,6 +677,11 @@ function fitView() {
       const L = (el.len || 1) / 2, a = ((el.angle || 0) * Math.PI) / 180;
       pts.push([el.x - L * Math.cos(a), el.y - L * Math.sin(a) - 0.03], [el.x + L * Math.cos(a), el.y + L * Math.sin(a)]);
     } else if (el.type === 'fix') pts.push([el.x - 0.05, el.y - 0.05], [el.x + 0.05, el.y + 0.05]);
+    else if (el.type === 'curve') {
+      const r = propNum(el, 'rho', e, 0.5);
+      let a0 = el.a0 ?? 200, a1 = el.a1 ?? 340; if (a1 < a0) a1 += 360;
+      for (let a = a0; a <= a1; a += 10) pts.push([el.x + r * Math.cos((a * Math.PI) / 180), el.y + r * Math.sin((a * Math.PI) / 180)]);
+    } else if (isLine(el)) for (const k of ['a', 'b']) if (el[k] && !el[k].el && Number.isFinite(el[k].x)) pts.push([el[k].x, el[k].y]);
   }
   if (!pts.length) { state.view = { cx: 0, cy: 0.15, s: 400 }; draw(); return; }
   const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
@@ -645,7 +752,7 @@ function field(label, key, value, opts = {}) {
 // ---- Einheiten (SI)
 const PROP_UNITS = {
   m: 'kg', J: 'kg·m²', R: 'm', Ri: 'm', a: 'm', b: 'm', l: 'm', L0: 'm',
-  k: 'N/m', d: 'N·s/m', kt: 'N·m/rad', dt: 'N·m·s/rad', F: 'N', M: 'N·m',
+  rho: 'm', k: 'N/m', d: 'N·s/m', kt: 'N·m/rad', dt: 'N·m·s/rad', F: 'N', M: 'N·m',
 };
 const FREQ_NAMES = /^(Omega|omega|w|Om)(_|$)/;
 const unitTag = (u) => (u ? ` <span class="unit">[${u}]</span>` : '');
@@ -676,7 +783,7 @@ function exprField(label, key, el) {
   return `<div class="field"><label>${label}${unitTag(PROP_UNITS[key])}</label><input type="text" class="${bad ? 'bad' : ''}" data-prop="${key}" value="${esc(v)}" spellcheck="false" autocomplete="off" autocapitalize="off"></div>`;
 }
 function angleField(label, el, key = 'angle') {
-  return `<div class="field"><label>${label}</label><div class="row"><input type="number" step="15" data-k="${key}" value="${el[key] ?? 0}" style="width:90px" class="inp"><button class="btn small" data-rot="-15">↻ 15°</button><button class="btn small" data-rot="15">↺ 15°</button></div></div>`;
+  return `<div class="field"><label>${label}</label><div class="row"><input type="number" step="1" data-k="${key}" value="${el[key] ?? 0}" style="width:90px" class="inp"><button class="btn small" data-rot="-15">↻ 15°</button><button class="btn small" data-rot="15">↺ 15°</button></div></div>`;
 }
 
 function panelModel() {
@@ -701,7 +808,16 @@ function panelModel() {
         break;
       case 'point': h += exprField('Masse m', 'm', el); break;
       case 'ground': h += angleField('Neigung' + unitTag('°'), el) + field('Länge (Zeichnung)' + unitTag('m'), 'len', el.len, { type: 'number', attrs: 'step="0.1" min="0.1"' }); break;
-      case 'fix': h += angleField('Richtung' + unitTag('°'), el); break;
+      case 'fix':
+        h += `<div class="field"><label>Darstellung</label><div class="seg"><button data-fstyle="wall" class="${el.style !== 'pin' ? 'on' : ''}">Wand</button><button data-fstyle="pin" class="${el.style === 'pin' ? 'on' : ''}">Festlager</button></div></div>`;
+        h += angleField('Richtung' + unitTag('°'), el) + '<p class="muted">Raumfester Punkt (Lager) für Seil-, Feder- und Dämpferenden.</p>';
+        break;
+      case 'curve':
+        h += exprField('Radius ρ', 'rho', el);
+        h += field('Bogen von' + unitTag('°'), 'a0', el.a0 ?? 200, { type: 'number', attrs: 'step="5"' }) + field('Bogen bis' + unitTag('°'), 'a1', el.a1 ?? 340, { type: 'number', attrs: 'step="5"' });
+        h += `<div class="field"><label>Art</label><div class="seg"><button data-concave="1" class="${el.concave !== false ? 'on' : ''}">Mulde (innen)</button><button data-concave="0" class="${el.concave === false ? 'on' : ''}">Kuppe (außen)</button></div></div>`;
+        h += '<p class="muted">Kreisförmige Bahn um den Mittelpunkt. Scheiben (Rollen/Gleiten) und Punktmassen (Gleiten) laufen innen (Mulde) oder außen (Kuppe). Werkzeug „Rollen“ bzw. „Gleiten“ auf den Körper anwenden.</p>';
+        break;
       case 'pin': h += angleField('Richtung' + unitTag('°'), el) + '<p class="muted">Festlager: Punkt unverschieblich, Drehung frei.</p>'; break;
       case 'roller': h += angleField('Richtung' + unitTag('°'), el) + '<p class="muted">Loslager/Gleitlager: Verschiebung in Richtung des Lagers gesperrt, quer dazu frei.</p>'; break;
       case 'hinge': h += '<p class="muted">Gelenk: Anschlusspunkte beider Körper bleiben zusammen, relative Drehung frei.</p>'; break;
@@ -714,6 +830,12 @@ function panelModel() {
         if (el.props.k !== undefined) h += exprField('Steifigkeit k', 'k', el);
         if (el.props.d !== undefined) h += exprField('Dämpfung d', 'd', el);
         h += exprField(el.type === 'rope' ? 'Seillänge l₀' : 'Länge l₀ (entspannt)', 'L0', el);
+        {
+          const endTxt = (r) => (r?.el ? (byId(r.el)?.type === 'fix' ? 'Lager/Festpunkt' : TYPES[byId(r.el)?.type]?.name + ' ' + (byId(r.el)?.label || '')) : '<b style="color:var(--warn)">frei</b>');
+          h += `<div class="field"><label>Enden</label><span style="font-size:14px">${endTxt(el.a)} – ${endTxt(el.b)}</span></div>`;
+          if (!el.a?.el || !el.b?.el) h += '<p class="msg warn">Ein freies Ende überträgt keine Kraft. Ende (□) auf einen Anschlusspunkt ziehen oder mit „Festlager“/„Festpunkt“ lagern.</p>';
+          else h += '<p class="muted">Enden (□) lassen sich auf andere Anschlusspunkte ziehen oder lösen.</p>';
+        }
         h += `<div class="field"><label></label><label class="row"><input type="checkbox" data-l0auto ${el.L0auto ? 'checked' : ''}> l₀ aus Zeichnung übernehmen</label></div>`;
         h += '<p class="muted">l₀ geht nur in die nichtlineare Rechnung ein. Liegt ein Ende tangential an einer Scheibe, wird es als aufgewickelt behandelt.</p>';
         break;
@@ -782,6 +904,8 @@ function bindModelPanel(el) {
   }));
   panel.querySelector('[data-bool]')?.addEventListener('change', (e) => { el.props[e.target.dataset.bool] = e.target.checked; changed(); panelModel(); });
   panel.querySelector('[data-l0auto]')?.addEventListener('change', (e) => { el.L0auto = e.target.checked; updateAutoL0(); changed(); panelModel(); });
+  panel.querySelectorAll('[data-fstyle]').forEach((b) => b.addEventListener('click', () => { if (b.dataset.fstyle === 'pin') { el.style = 'pin'; el.angle = -90; } else { delete el.style; } changed(); panelModel(); }));
+  panel.querySelectorAll('[data-concave]').forEach((b) => b.addEventListener('click', () => { el.concave = b.dataset.concave === '1'; changed(); panelModel(); }));
   panel.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => { el.mode = b.dataset.mode; changed(); panelModel(); }));
   panel.querySelectorAll('[data-mdir]').forEach((b) => b.addEventListener('click', () => { el.dir = Number(b.dataset.mdir); changed(); panelModel(); }));
   panel.querySelector('[data-del]')?.addEventListener('click', () => deleteElement(el.id));
