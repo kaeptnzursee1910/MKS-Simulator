@@ -1,0 +1,231 @@
+// Aufbau des mechanischen Modells aus der Zeichnung:
+// Körperkoordinaten (Verschiebungen x, y und Verdrehung ϑ gegenüber der gezeichneten Lage),
+// Bindungsgleichungen, Federn/Dämpfer, Lasten.
+import { sym, num, add, mul, pow, MONE, ZERO, ONE, sqrt, simplify, sqrtsimp, evalNum, cos, sin } from '../cas/expr.js';
+import { paramNames } from '../cas/parse.js';
+import { TYPES, isBody, isLine, hasRotation, propExpr, ports, exactTrig, rot, portWorld, defaultParamValue } from './elements.js';
+
+export function dotTex(tex, n) {
+  const acc = n === 1 ? '\\dot' : '\\ddot';
+  const m = /^(\\[a-zA-Z]+|[A-Za-z])(.*)$/.exec(tex);
+  if (!m) return acc + '{' + tex + '}';
+  return acc + '{' + m[1] + '}' + m[2];
+}
+export function makeCoord(name, tex, order) {
+  const s = sym(name, { kind: 'coord', latex: tex, order, pos: false });
+  const d = sym(name + '__d', { kind: 'vel', latex: dotTex(tex, 1), order, pos: false });
+  const dd = sym(name + '__dd', { kind: 'acc', latex: dotTex(tex, 2), order, pos: false });
+  return { name, tex, s, d, dd };
+}
+
+/** Alle Parameter-Namen, die in den Elementen vorkommen */
+export function usedParams(sys) {
+  const names = new Set();
+  const errors = [];
+  for (const el of sys.elements) {
+    for (const [k, v] of Object.entries(el.props || {})) {
+      if (v === '' || v === undefined || v === null || typeof v === 'boolean') continue;
+      try { for (const n of paramNames(propExpr(el, k))) names.add(n); } catch (e) { errors.push(e.message); }
+    }
+  }
+  if (sys.gravity) names.add('g');
+  return { names: [...names].sort(), errors };
+}
+export function ensureParams(sys) {
+  const { names } = usedParams(sys);
+  sys.params = sys.params || {};
+  for (const n of names) if (sys.params[n] === undefined) sys.params[n] = defaultParamValue(n);
+  return names;
+}
+export function paramEnv(sys) {
+  const env = {};
+  for (const [k, v] of Object.entries(sys.params || {})) env[k] = Number(v);
+  env.pi = Math.PI;
+  return env;
+}
+
+const angleDeg = (a, b) => (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI;
+
+export function buildModel(sys) {
+  const env = paramEnv(sys);
+  const byId = new Map(sys.elements.map((e) => [e.id, e]));
+  const bodies = [];
+  const bodyOf = new Map();
+  let idx = 0;
+  for (const el of sys.elements) {
+    if (!isBody(el)) continue;
+    idx++;
+    const lab = el.label || String(idx);
+    const o = idx * 10;
+    const b = {
+      el, label: lab,
+      m: propExpr(el, 'm'),
+      J: hasRotation(el) ? propExpr(el, 'J') : null,
+      X: makeCoord('X_' + el.id, 'x_{' + lab + '}', o + 1),
+      Y: makeCoord('Y_' + el.id, 'y_{' + lab + '}', o + 2),
+      TH: hasRotation(el) ? makeCoord('T_' + el.id, '\\vartheta_{' + lab + '}', o + 3) : null,
+    };
+    bodies.push(b);
+    bodyOf.set(el.id, b);
+  }
+  const absCoords = [];
+  for (const b of bodies) { absCoords.push(b.X, b.Y); if (b.TH) absCoords.push(b.TH); }
+
+  const refEnv = { ...env };
+  for (const c of absCoords) { refEnv[c.s.name] = 0; refEnv[c.d.name] = 0; refEnv[c.dd.name] = 0; }
+
+  const elName = (el) => TYPES[el.type].name + (el.label ? ' ' + el.label : '');
+  const anchor = (ref) => {
+    const el = byId.get(ref?.el);
+    if (!el) throw new Error('Ein Element ist nicht (mehr) verbunden.');
+    if (el.type === 'fix') return { el, body: null, port: { id: 'c', s: [ZERO, ZERO], w: [0, 0], rim: null } };
+    const body = bodyOf.get(el.id);
+    if (!body) throw new Error('Anschluss an ' + elName(el) + ' nicht möglich.');
+    const p = ports(el, env).find((x) => x.id === ref.port);
+    if (!p) throw new Error('Anschlusspunkt „' + ref.port + '“ an Körper ' + body.label + ' existiert nicht.');
+    return { el, body, port: p };
+  };
+  // exakte Verschiebung eines körperfesten Punktes mit Versatz s
+  const disp = (body, s) => {
+    if (!body) return [ZERO, ZERO];
+    if (!body.TH) return [body.X.s, body.Y.s];
+    const th = body.TH.s;
+    const r = rot(s, [cos(th), sin(th)]);
+    return [add(body.X.s, r[0], mul(MONE, s[0])), add(body.Y.s, r[1], mul(MONE, s[1]))];
+  };
+  const worldOf = (a) => portWorld(a.el, a.port.id, env);
+
+  const cons = [];
+  const springs = [], dampers = [], tsprings = [], tdampers = [], loads = [], moments = [];
+  const lineInfo = new Map();
+
+  function elongation(el) {
+    const A = anchor(el.a), B = anchor(el.b);
+    if (A.body && B.body && A.body === B.body) throw new Error(elName(el) + ': beide Enden am selben Körper.');
+    const pa = worldOf(A), pb = worldOf(B);
+    const len = Math.hypot(pb[0] - pa[0], pb[1] - pa[1]);
+    if (len < 1e-6) throw new Error(elName(el) + ': Länge null – Enden liegen aufeinander.');
+    const ang = angleDeg(pa, pb);
+    const e = exactTrig(ang, 1.0);
+    const en = [Math.cos((ang * Math.PI) / 180), Math.sin((ang * Math.PI) / 180)];
+    const L0 = propExpr(el, 'L0');
+    const part = (X) => {
+      if (!X.body) return { d: [ZERO, ZERO], w: ZERO, wound: false };
+      const p = X.port;
+      let wound = false;
+      if (p.rim && X.body.TH) {
+        const rn = Math.hypot(p.w[0], p.w[1]) || 1;
+        const c = (p.w[0] * en[0] + p.w[1] * en[1]) / rn;
+        wound = Math.abs(c) < 0.15;
+      }
+      if (wound) {
+        // aufgewickeltes Seil: Tangentenpunkt verschiebt sich mit dem Mittelpunkt, Abwickeln = R·ϑ
+        const zs = [mul(MONE, p.s[1]), p.s[0]];
+        const w = mul(add(mul(e[0], zs[0]), mul(e[1], zs[1])), X.body.TH.s);
+        return { d: [X.body.X.s, X.body.Y.s], w, wound: true };
+      }
+      return { d: disp(X.body, p.s), w: ZERO, wound: false };
+    };
+    const a = part(A), b = part(B);
+    const dx = add(mul(L0, e[0]), b.d[0], mul(MONE, a.d[0]));
+    const dy = add(mul(L0, e[1]), b.d[1], mul(MONE, a.d[1]));
+    let dL = add(sqrt(add(pow(dx, 2), pow(dy, 2))), mul(MONE, L0), b.w, mul(MONE, a.w));
+    dL = simplify(sqrtsimp(simplify(dL), refEnv));
+    const infoL = { A, B, e, ang, wound: [a.wound, b.wound], L0, dx, dy };
+    lineInfo.set(el.id, infoL);
+    return dL;
+  }
+
+  for (const el of sys.elements) {
+    const nm = elName(el);
+    switch (el.type) {
+      case 'pin': {
+        const A = anchor(el.at);
+        if (!A.body) throw new Error('Festlager muss an einem Körper sitzen.');
+        const d = disp(A.body, A.port.s);
+        cons.push({ expr: d[0], label: nm + ' (horizontal)', el });
+        cons.push({ expr: d[1], label: nm + ' (vertikal)', el });
+        break;
+      }
+      case 'roller': {
+        const A = anchor(el.at);
+        if (!A.body) throw new Error('Loslager muss an einem Körper sitzen.');
+        const d = disp(A.body, A.port.s);
+        const n = exactTrig((el.angle ?? -90));
+        cons.push({ expr: add(mul(n[0], d[0]), mul(n[1], d[1])), label: nm, el });
+        break;
+      }
+      case 'hinge': {
+        const A = anchor(el.a), B = anchor(el.b);
+        const da = disp(A.body, A.port.s), db = disp(B.body, B.port.s);
+        cons.push({ expr: add(da[0], mul(MONE, db[0])), label: nm + ' (x)', el });
+        cons.push({ expr: add(da[1], mul(MONE, db[1])), label: nm + ' (y)', el });
+        break;
+      }
+      case 'contact': {
+        const b = bodyOf.get(el.body), g = byId.get(el.ground);
+        if (!b || !g) throw new Error(nm + ': Körper oder Boden fehlt.');
+        const tr = exactTrig(g.angle || 0);
+        const t = tr, n = [mul(MONE, tr[1]), tr[0]];
+        const ga = ((g.angle || 0) * Math.PI) / 180;
+        const side = (-Math.sin(ga) * (b.el.x - g.x) + Math.cos(ga) * (b.el.y - g.y)) >= 0 ? 1 : -1;
+        cons.push({ expr: add(mul(n[0], b.X.s), mul(n[1], b.Y.s)), label: nm + ' (Normalrichtung)', el });
+        if (el.mode === 'roll') {
+          if (b.el.type !== 'disk') throw new Error('Rollen ohne Gleiten ist nur für Scheiben möglich.');
+          const R = propExpr(b.el, 'R');
+          cons.push({ expr: add(mul(t[0], b.X.s), mul(t[1], b.Y.s), mul(side, R, b.TH.s)), label: nm + ' (Rollen ohne Gleiten)', el });
+        } else if (b.TH && b.el.type === 'block') {
+          cons.push({ expr: b.TH.s, label: nm + ' (keine Verdrehung)', el });
+        }
+        break;
+      }
+      case 'rope': case 'spring': case 'damper': case 'springdamper': {
+        const dL = elongation(el);
+        if (el.type === 'rope') cons.push({ expr: dL, label: nm + ' (Seillänge konstant)', el, line: el });
+        if (el.type === 'spring' || el.type === 'springdamper') springs.push({ el, k: propExpr(el, 'k'), dL });
+        if (el.type === 'damper' || el.type === 'springdamper') dampers.push({ el, d: propExpr(el, 'd'), dL });
+        break;
+      }
+      case 'tspring': case 'tdamper': {
+        const A = bodyOf.get(el.a), B = el.b ? bodyOf.get(el.b) : null;
+        if (!A || !A.TH || (el.b && (!B || !B.TH))) throw new Error(nm + ': nur zwischen drehbaren Körpern (bzw. Körper und Umgebung).');
+        const rel = B ? add(A.TH.s, mul(MONE, B.TH.s)) : A.TH.s;
+        if (el.type === 'tspring') tsprings.push({ el, k: propExpr(el, 'kt'), rel });
+        else tdampers.push({ el, d: propExpr(el, 'dt'), rel });
+        break;
+      }
+      case 'force': {
+        const A = anchor(el.at);
+        if (!A.body) throw new Error('Kraft muss an einem Körper angreifen.');
+        const F = propExpr(el, 'F');
+        const dir = exactTrig(el.angle ?? 0);
+        loads.push({ el, F, dir, Fv: [mul(F, dir[0]), mul(F, dir[1])], d: disp(A.body, A.port.s), body: A.body });
+        break;
+      }
+      case 'moment': {
+        const b = bodyOf.get(el.body);
+        if (!b || !b.TH) throw new Error('Moment nur an drehbaren Körpern.');
+        const M = mul(el.dir === -1 ? MONE : ONE, propExpr(el, 'M'));
+        moments.push({ el, M, th: b.TH.s, body: b });
+        break;
+      }
+    }
+  }
+
+  const g = sys.gravity ? sym('g', { kind: 'param', latex: 'g', pos: true }) : null;
+  const Ug = g ? add(...bodies.map((b) => mul(b.m, g, b.Y.s))) : ZERO;
+  const Us = add(...springs.map((s) => mul(num(1, 2), s.k, pow(s.dL, 2))));
+  const Ut = add(...tsprings.map((s) => mul(num(1, 2), s.k, pow(s.rel, 2))));
+  const U = add(Ug, Us, Ut);
+
+  return { sys, env, refEnv, bodies, bodyOf, absCoords, cons, springs, dampers, tsprings, tdampers, loads, moments, g, U, Ug, lineInfo, elName };
+}
+
+/** Numerische Jacobi-Matrix der Bindungen in der Bezugslage */
+export function numericJacobian(model, exprs, coords) {
+  return exprs.map((e) => coords.map((c) => {
+    try { return evalNum(diffAt(e, c.s), model.refEnv); } catch { return NaN; }
+  }));
+}
+import { diff } from '../cas/expr.js';
+function diffAt(e, s) { return diff(e, s); }

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="Mehrkörpersysteme zeichnen, Bewegungsgleichungen (Lagrange 1./2. Art, d'Alembert-Lagrange) herleiten und simulieren.">
+  <title>MKS-Simulator</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='12' cy='14' r='9' fill='none' stroke='%23222' stroke-width='2'/%3E%3Cpath d='M21 14h3l2-4 2 8 2-4' fill='none' stroke='%23222' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="vendor/katex/katex.min.css">
+  <script defer src="vendor/katex/katex.min.js"></script>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">MKS</span><span class="brand-text">Simulator</span></div>
+    <nav class="steps" id="steps">
+      <button data-step="model"><b>1</b><span>Modell</span></button>
+      <button data-step="dof"><b>2</b><span>Freiheitsgrade</span></button>
+      <button data-step="eq"><b>3</b><span>Gleichungen</span></button>
+      <button data-step="sim"><b>4</b><span>Simulation</span></button>
+    </nav>
+    <div class="menu">
+      <button id="btn-menu" class="icon-btn" aria-label="Menü">☰</button>
+      <div id="menu" class="dropdown" hidden>
+        <button data-act="new">Neues System</button>
+        <div class="dd-label">Beispiele</div>
+        <div id="menu-examples"></div>
+        <hr>
+        <button data-act="export">Als Datei speichern (.json)</button>
+        <button data-act="import">Datei laden …</button>
+        <button data-act="svg">Zeichnung als SVG speichern</button>
+        <hr>
+        <button data-act="help">Hilfe</button>
+      </div>
+    </div>
+    <input type="file" id="file-input" accept=".json,application/json" hidden>
+  </header>
+
+  <main id="app" class="step-model">
+    <aside id="palette" aria-label="Elemente"></aside>
+    <section id="stage">
+      <svg id="canvas" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div id="hint" class="hint"></div>
+      <div class="zoom-ctl">
+        <button data-zoom="in" title="Vergrößern">+</button>
+        <button data-zoom="out" title="Verkleinern">−</button>
+        <button data-zoom="fit" title="Alles zeigen">⤢</button>
+      </div>
+      <div id="player" class="player" hidden></div>
+    </section>
+    <aside id="panel"></aside>
+    <section id="eqview" hidden></section>
+  </main>
+
+  <div id="help" class="modal" hidden>
+    <div class="modal-card">
+      <button class="modal-close" data-close>×</button>
+      <h2>So funktioniert der MKS-Simulator</h2>
+      <ol>
+        <li><b>Modell:</b> Werkzeug in der Palette wählen und auf die Zeichenfläche tippen. Körper (Klotz, Scheibe, Stab, Punktmasse) und Boden/Festpunkte frei platzieren. Lager, Seile, Federn und Dämpfer verbinden die <span class="blue">blauen Anschlusspunkte</span>. Ein Tipp ins Leere setzt einen Festpunkt (Wand).</li>
+        <li>Mit <b>Auswahl</b> verschiebt man Elemente und bearbeitet rechts bzw. unten die Parameter. Parameter sind Ausdrücke wie <code>m</code>, <code>2*r</code>, <code>J_2</code>, <code>F_0*cos(Omega*t)</code>. Ihre Zahlenwerte stehen in der Parametertabelle.</li>
+        <li><b>Freiheitsgrade:</b> Methode (Lagrange 1. Art, 2. Art, d'Alembert-Lagrange) und Modus (linearisiert / nichtlinear) wählen, dann je Freiheitsgrad Körper, Koordinate (x, y, φ) und positive Richtung festlegen.</li>
+        <li><b>Gleichungen:</b> Die Herleitung erscheint mit allen Zwischenschritten.</li>
+        <li><b>Simulation:</b> Anfangswerte, Integrationsverfahren und Schrittweite wählen und die Bewegung abspielen.</li>
+      </ol>
+      <p class="muted">Konventionen: x nach rechts, y nach oben, ϑ gegen den Uhrzeigersinn; alle Koordinaten sind Auslenkungen aus der gezeichneten Lage. Seile werden als dehnstarr und straff angenommen; ein Seil, das tangential an einer Scheibe anliegt, gilt als aufgewickelt. Federn sind in der gezeichneten Lage entspannt (Länge l₀).</p>
+      <p class="muted">Bedienung: Ziehen auf leerer Fläche verschiebt die Ansicht, Mausrad oder zwei Finger zoomen. Entf löscht die Auswahl, Esc bricht ab.</p>
+    </div>
+  </div>
+  <div id="toast" class="toast" hidden></div>
+
+  <script type="module" src="js/ui/app.js"></script>
+</body>
+</html>
