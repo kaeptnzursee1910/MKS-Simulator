@@ -237,6 +237,43 @@ const CASES = [
     ref: ['(J + m*l^2/4)*Q1dd + m*g*l/2*(sqrt(3)/2*sin(Q1) - 1/2*cos(Q1))'],
     refLin: ['(J + m*l^2/4)*Q1dd + sqrt(3)/4*m*g*l*Q1 - m*g*l/4'],
   },
+  {
+    name: 'Zwei Federn in Reihe über masselosen Knoten',
+    modes: ['linear', 'nonlinear'],
+    sys: {
+      elements: [
+        ground(0, 0),
+        { id: 'w1', type: 'fix', x: -0.4, y: 0.06, angle: 0 },
+        { id: 'n1', type: 'node', x: -0.2, y: 0.06 },
+        { id: 'b1', type: 'block', label: '1', x: 0.1, y: 0.06, props: { m: 'm', a: '0.2', b: '0.12', rot: false } },
+        { id: 'c1', type: 'contact', body: 'b1', ground: 'g00', mode: 'slide' },
+        { id: 's1', type: 'spring', a: { el: 'w1', port: 'c' }, b: { el: 'n1', port: 'c' }, props: { k: 'k_1', L0: '0.2' } },
+        { id: 's2', type: 'spring', a: { el: 'n1', port: 'c' }, b: { el: 'b1', port: 'l' }, props: { k: 'k_2', L0: '0.1' } },
+      ],
+      params: { m: 1.5, k_1: 120, k_2: 300 }, gravity: false,
+      dofs: [{ id: 'q1', body: 'b1', coord: 'x', dir: 1, name: 'x' }],
+    },
+    ref: ['m*Q1dd + k_1*k_2/(k_1 + k_2)*Q1'],
+  },
+  {
+    name: 'Hängende Masse: Seil – Knoten – Feder – Knoten – Feder',
+    modes: ['linear', 'nonlinear'],
+    sys: {
+      elements: [
+        { id: 'w1', type: 'fix', x: 0, y: 0.9, angle: -90 },
+        { id: 'n1', type: 'node', x: 0, y: 0.7 },
+        { id: 'n2', type: 'node', x: 0, y: 0.4 },
+        { id: 'b1', type: 'block', label: '1', x: 0, y: 0, props: { m: 'm', a: '0.1', b: '0.1', rot: false } },
+        { id: 'r1', type: 'roller', at: { el: 'b1', port: 'l' }, angle: 180 },
+        { id: 's0', type: 'rope', a: { el: 'w1', port: 'c' }, b: { el: 'n1', port: 'c' }, props: { L0: '0.2' } },
+        { id: 's1', type: 'spring', a: { el: 'n1', port: 'c' }, b: { el: 'n2', port: 'c' }, props: { k: 'k_1', L0: '0.3' } },
+        { id: 's2', type: 'spring', a: { el: 'n2', port: 'c' }, b: { el: 'b1', port: 't' }, props: { k: 'k_2', L0: '0.35' } },
+      ],
+      params: { m: 2, k_1: 400, k_2: 600, g: 9.81 }, gravity: true,
+      dofs: [{ id: 'q1', body: 'b1', coord: 'y', dir: -1, name: 'x' }],
+    },
+    ref: ['m*Q1dd + k_1*k_2/(k_1 + k_2)*Q1 - m*g'],
+  },
 ];
 
 // ------------------------------------------------------------------
@@ -346,5 +383,28 @@ simCase(atw, 'L1', 'nonlinear', 0, 0.4, (t, e) => 0.5 * ((e.m_1 - e.m_2) * e.g /
   const m = buildModel(sys);
   const ok = m.warnings.length === 1 && m.springs.length === 0;
   console.log((ok ? 'ok    ' : 'FEHLER') + ' Feder mit freiem Ende: wird ignoriert, Warnung ausgegeben');
+  if (!ok) process.exitCode = 1;
+}
+
+// ------------------------------------------------------------------ Reihenschaltung: Fehlerfälle
+{
+  const base = (extra) => ({ elements: [
+    { id: 'w1', type: 'fix', x: -0.4, y: 0, angle: 0 },
+    { id: 'n1', type: 'node', x: -0.2, y: 0 },
+    { id: 'b1', type: 'point', label: '1', x: 0.1, y: 0, props: { m: 'm' } },
+    ...extra,
+  ], params: { m: 1, k: 10, d: 1 }, gravity: false, dofs: [] });
+  const { buildModel } = await import('../js/mech/model.js');
+  let msg = '';
+  try { buildModel(base([
+    { id: 's1', type: 'spring', a: { el: 'w1', port: 'c' }, b: { el: 'n1', port: 'c' }, props: { k: 'k', L0: '0.2' } },
+    { id: 's2', type: 'damper', a: { el: 'n1', port: 'c' }, b: { el: 'b1', port: 'c' }, props: { d: 'd', L0: '0.3' } }])); } catch (e) { msg = e.message; }
+  let ok = msg.includes('Maxwell');
+  console.log((ok ? 'ok    ' : 'FEHLER') + ' Feder + Dämpfer in Reihe: verständliche Fehlermeldung');
+  if (!ok) process.exitCode = 1;
+  const m = buildModel(base([
+    { id: 's1', type: 'spring', a: { el: 'w1', port: 'c' }, b: { el: 'n1', port: 'c' }, props: { k: 'k', L0: '0.2' } }]));
+  ok = m.warnings.length === 1 && m.springs.length === 0;
+  console.log((ok ? 'ok    ' : 'FEHLER') + ' Knoten mit nur einer Feder: Warnung, keine Kraft');
   if (!ok) process.exitCode = 1;
 }

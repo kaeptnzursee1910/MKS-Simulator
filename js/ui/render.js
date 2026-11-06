@@ -153,6 +153,30 @@ export function renderScene(sys, V, opts = {}) {
   const D = (id) => (disp ? disp.get(id) : null) || null;
   const col = (el) => (el.id === sel ? ACC : INK);
   const byId = new Map(sys.elements.map((e) => [e.id, e]));
+  // Animation: masselose Knoten liegen anteilig zwischen ihren Nachbarenden
+  const nodePos = new Map();
+  if (disp) {
+    const nodes = sys.elements.filter((e) => e.type === 'node');
+    const endPos = (ref, ref0) => {
+      if (!ref?.el) return ref0 ? [ref.x, ref.y] : [ref.x, ref.y];
+      const X = byId.get(ref.el);
+      if (!X) return [0, 0];
+      if (X.type === 'node') return ref0 ? [X.x, X.y] : (nodePos.get(X.id) || [X.x, X.y]);
+      return ref0 ? portWorld(X, ref.port, env) : portWorld(X, ref.port, env, D(X.id));
+    };
+    for (let it = 0; it < 12; it++) {
+      for (const n of nodes) {
+        const att = sys.elements.filter((l) => isLine(l) && (l.a?.el === n.id || l.b?.el === n.id));
+        if (att.length !== 2) continue;
+        const far = att.map((l) => (l.a?.el === n.id ? l.b : l.a));
+        const A0 = endPos(far[0], true), B0 = endPos(far[1], true);
+        const L = Math.hypot(B0[0] - A0[0], B0[1] - A0[1]) || 1;
+        const t = Math.hypot(n.x - A0[0], n.y - A0[1]) / L;
+        const A = endPos(far[0], false), B = endPos(far[1], false);
+        nodePos.set(n.id, [A[0] + t * (B[0] - A[0]), A[1] + t * (B[1] - A[1])]);
+      }
+    }
+  }
 
   // Raster
   if (opts.grid) {
@@ -205,6 +229,11 @@ export function renderScene(sys, V, opts = {}) {
           const n = V.dir(el.angle || 0), t = perp(n);
           const a = add2(P, t, 16), b = add2(P, t, -16);
           out.ground += g0 + circ(P, 12, 'transparent', 1, 'transparent') + seg(a, b, c, 1.8) + hatch(b, a, [-n[0], -n[1]], c, 8, 8) + '</g>';
+          break;
+        }
+        case 'node': {
+          const P = V.S(...(nodePos.get(el.id) || [el.x, el.y]));
+          out.supports += g0 + circ(P, 10, 'transparent', 1, 'transparent') + circ(P, 3.8, c, 1.2, c) + '</g>';
           break;
         }
         case 'disk': out.bodies += g0 + drawDisk(el, V, env, D(el.id), c) + '</g>'; break;
@@ -260,8 +289,9 @@ export function renderScene(sys, V, opts = {}) {
         case 'rope': case 'spring': case 'damper': case 'springdamper': {
           const geo = lineGeometry(sys, el, env);
           if (!geo) break;
-          const pa = V.S(...(geo.A ? anchorPos(geo.A, el.a.port, env, D(geo.A.id), geo.wa) : geo.pa));
-          const pb = V.S(...(geo.B ? anchorPos(geo.B, el.b.port, env, D(geo.B.id), geo.wb) : geo.pb));
+          const endW = (X, ref, wnd, p0) => (!X ? p0 : X.type === 'node' ? (nodePos.get(X.id) || p0) : anchorPos(X, ref.port, env, D(X.id), wnd));
+          const pa = V.S(...endW(geo.A, el.a, geo.wa, geo.pa));
+          const pb = V.S(...endW(geo.B, el.b, geo.wb, geo.pb));
           let ends = '';
           if (!geo.A) ends += circ(pa, 3.5, c, 1.3, '#fff');
           if (!geo.B) ends += circ(pb, 3.5, c, 1.3, '#fff');
@@ -331,7 +361,7 @@ export function renderScene(sys, V, opts = {}) {
   // Anschlusspunkte
   if (opts.showPorts) {
     for (const el of sys.elements) {
-      if (!isBody(el) && el.type !== 'fix') continue;
+      if (!isBody(el) && el.type !== 'fix' && el.type !== 'node') continue;
       if (opts.portFilter && !opts.portFilter(el)) continue;
       for (const p of ports(el, env)) {
         if (el.type === 'rod' && (p.id === 'q1' || p.id === 'q2') && !opts.allPorts) continue;
@@ -510,6 +540,7 @@ export function paletteIcon(tool) {
     case 'stepdisk': return W(circ([20, 15], 12, c) + circ([20, 15], 6, c) + circ([20, 15], 1.6, c, 1, '#fff'));
     case 'rod': return W(poly([[7, 24], [33, 6], [35, 9], [9, 27]], c, 1.3, '#fff', true));
     case 'point': return W(circ([20, 15], 5, c, 1.4, c));
+    case 'node': return W(springPath([2, 15], [18, 15], c) + springPath([22, 15], [38, 15], c) + circ([20, 15], 3, c, 1.2, c));
     case 'ground': return W(seg([4, 14], [36, 14], c, 1.6) + hatch([4, 14], [36, 14], [0, 1], c, 6, 7));
     case 'curve': return W('<path d="M4 6 A17 17 0 0 0 36 6" fill="none" stroke="' + c + '" stroke-width="1.6"/>' + [[8, 13], [14, 18], [20, 20], [26, 18], [32, 13]].map(([x, y]) => seg([x, y], [x - 3, y + 5], c, 1)).join(''));
     case 'fix': return W(seg([16, 5], [16, 25], c, 1.8) + hatch([16, 25], [16, 5], [-1, 0], c, 5, 6) + seg([16, 15], [34, 15], c, 1.2));

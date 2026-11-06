@@ -119,7 +119,7 @@ const TOOLS = [
   ['Körper', [['block', 'Klotz'], ['disk', 'Scheibe'], ['stepdisk', 'Stufen­rolle'], ['rod', 'Stab'], ['point', 'Punkt­masse']]],
   ['Umgebung', [['ground', 'Boden'], ['curve', 'Kreis­bahn'], ['fix', 'Fest­punkt']]],
   ['Lager', [['pin', 'Fest­lager'], ['roller', 'Los­lager'], ['hinge', 'Gelenk'], ['roll', 'Rollen'], ['slide', 'Gleiten']]],
-  ['Verbinder', [['rope', 'Seil'], ['spring', 'Feder'], ['damper', 'Dämpfer'], ['springdamper', 'Feder ∥ Dämpfer'], ['tspring', 'Dreh­feder'], ['tdamper', 'Dreh­dämpfer']]],
+  ['Verbinder', [['rope', 'Seil'], ['spring', 'Feder'], ['damper', 'Dämpfer'], ['springdamper', 'Feder ∥ Dämpfer'], ['node', 'Knoten'], ['tspring', 'Dreh­feder'], ['tdamper', 'Dreh­dämpfer']]],
   ['Lasten', [['force', 'Kraft'], ['moment', 'Moment']]],
 ];
 const PORT_TOOLS = new Set(['pin', 'roller', 'hinge', 'rope', 'spring', 'damper', 'springdamper', 'force']);
@@ -140,10 +140,11 @@ const HINTS = {
   hinge: 'Anschlusspunkt am ersten Körper, dann am zweiten Körper antippen.',
   roll: 'Scheibe antippen → rollt ohne Gleiten auf dem nächsten Boden bzw. der nächsten Kreisbahn.',
   slide: 'Körper antippen → gleitet reibungsfrei auf dem nächsten Boden bzw. der nächsten Kreisbahn.',
-  rope: 'Ersten, dann zweiten Punkt antippen: Anschlusspunkt = verbunden, leere Fläche = freies Ende.',
-  spring: 'Ersten, dann zweiten Punkt antippen: Anschlusspunkt = verbunden, leere Fläche = freies Ende.',
-  damper: 'Ersten, dann zweiten Punkt antippen: Anschlusspunkt = verbunden, leere Fläche = freies Ende.',
-  springdamper: 'Ersten, dann zweiten Punkt antippen: Anschlusspunkt = verbunden, leere Fläche = freies Ende.',
+  rope: 'Ersten, dann zweiten Punkt antippen: Anschlusspunkt = verbunden, freies Ende eines anderen Elements = in Reihe, leere Fläche = freies Ende.',
+  spring: 'Ersten, dann zweiten Punkt antippen: Anschlusspunkt = verbunden, freies Ende eines anderen Elements = in Reihe, leere Fläche = freies Ende.',
+  damper: 'Ersten, dann zweiten Punkt antippen: Anschlusspunkt = verbunden, freies Ende eines anderen Elements = in Reihe, leere Fläche = freies Ende.',
+  springdamper: 'Ersten, dann zweiten Punkt antippen: Anschlusspunkt = verbunden, freies Ende eines anderen Elements = in Reihe, leere Fläche = freies Ende.',
+  node: 'Freies Seil-/Federende antippen (oder leere Fläche): masseloser Verbindungspunkt für Reihenschaltungen.',
   tspring: 'Drehbaren Körper antippen, dann zweiten Körper oder leere Fläche (Umgebung).',
   tdamper: 'Drehbaren Körper antippen, dann zweiten Körper oder leere Fläche (Umgebung).',
   force: 'Anschlusspunkt antippen, an dem die Kraft angreift.',
@@ -258,7 +259,7 @@ function portAt(sx, sy, maxDist = 18, filter = null) {
   const e = env();
   let best = null, bd = maxDist;
   for (const el of state.sys.elements) {
-    if (!isBody(el) && el.type !== 'fix') continue;
+    if (!isBody(el) && el.type !== 'fix' && el.type !== 'node') continue;
     if (filter && !filter(el)) continue;
     for (const p of ports(el, e)) {
       if (el.type === 'rod' && (p.id === 'q1' || p.id === 'q2')) continue;
@@ -305,6 +306,16 @@ function finishLine(a, b) {
   el.props.L0 = String(round3(L));
   return el;
 }
+function nodeAt(sx, sy, maxDist = 16) {
+  let best = null, bd = maxDist;
+  for (const el of state.sys.elements) {
+    if (el.type !== 'node') continue;
+    const P = V.S(el.x, el.y);
+    const d = Math.hypot(P[0] - sx, P[1] - sy);
+    if (d < bd) { bd = d; best = el; }
+  }
+  return best;
+}
 /** freies Seil-/Federende in der Nähe eines Bildschirmpunkts */
 function freeEndAt(sx, sy, maxDist = 18) {
   let best = null, bd = maxDist;
@@ -319,6 +330,14 @@ function freeEndAt(sx, sy, maxDist = 18) {
     }
   }
   return best;
+}
+/** freies Ende in einen masselosen Knoten umwandeln (für Reihenschaltungen) */
+function nodeAtFreeEnd(fe) {
+  const r = fe.line[fe.end];
+  const n = { id: newId('n'), type: 'node', x: r.x, y: r.y };
+  state.sys.elements.push(n);
+  fe.line[fe.end] = { el: n.id, port: 'c' };
+  return n;
 }
 /** Lager (Festlager-Symbol oder Wand) an einem freien Ende anbringen */
 function supportFreeEnd(fe, style) {
@@ -479,7 +498,16 @@ function tap(sx, sy, target) {
       state.sys.elements.push(el); state.sel = el.id; setTool('select');
       break;
     }
+    case 'node': {
+      const fe = freeEndAt(sx, sy);
+      const n = fe ? nodeAtFreeEnd(fe) : { id: newId('n'), type: 'node', x: ws[0], y: ws[1] };
+      if (!fe) state.sys.elements.push(n);
+      state.sel = n.id;
+      break;
+    }
     case 'fix': {
+      const nd = nodeAt(sx, sy);
+      if (nd) { nd.type = 'fix'; nd.angle = 0; state.sel = nd.id; break; }
       const fe = freeEndAt(sx, sy);
       if (fe) { state.sel = supportFreeEnd(fe, 'wall').id; break; }
       const el = createFix(ws); el.angle = 0;
@@ -489,6 +517,8 @@ function tap(sx, sy, target) {
     case 'pin': case 'roller': {
       const p = portAt(sx, sy, 20, isBody);
       if (!p) {
+        const nd = nodeAt(sx, sy);
+        if (nd && t === 'pin') { nd.type = 'fix'; nd.style = 'pin'; nd.angle = -90; state.sel = nd.id; break; }
         const fe = freeEndAt(sx, sy);
         if (fe && t === 'pin') { state.sel = supportFreeEnd(fe, 'pin').id; break; }
         if (fe) { toast('Ein freies Seil-/Federende ist masselos und kann nicht verschieblich gelagert werden – Festlager verwenden.'); return; }
@@ -522,7 +552,11 @@ function tap(sx, sy, target) {
       break;
     }
     case 'rope': case 'spring': case 'damper': case 'springdamper': {
-      const p = portAt(sx, sy, 18);
+      let p = portAt(sx, sy, 18);
+      if (!p) {
+        const fe = freeEndAt(sx, sy);
+        if (fe) { const n = nodeAtFreeEnd(fe); p = { el: n.id, port: 'c' }; }
+      }
       const endRef = p || { x: ws[0], y: ws[1] };
       if (!state.pending) {
         state.pending = { kind: 'line', a: endRef };
@@ -588,7 +622,7 @@ svg.addEventListener('pointerdown', (e) => {
   }
   const elG = e.target.closest?.('[data-id]');
   const el = elG ? byId(elG.dataset.id) : null;
-  const draggable = state.step === 'model' && state.tool === 'select' && el && (isBody(el) || el.type === 'ground' || el.type === 'fix');
+  const draggable = state.step === 'model' && state.tool === 'select' && el && (isBody(el) || el.type === 'ground' || el.type === 'fix' || el.type === 'node' || el.type === 'curve');
   gesture = { kind: 'down', sx, sy, target: e.target, el: draggable ? el : null, ox: el?.x, oy: el?.y, view0: { ...state.view }, moved: false };
 });
 svg.addEventListener('pointermove', (e) => {
@@ -676,7 +710,7 @@ function fitView() {
     } else if (el.type === 'ground') {
       const L = (el.len || 1) / 2, a = ((el.angle || 0) * Math.PI) / 180;
       pts.push([el.x - L * Math.cos(a), el.y - L * Math.sin(a) - 0.03], [el.x + L * Math.cos(a), el.y + L * Math.sin(a)]);
-    } else if (el.type === 'fix') pts.push([el.x - 0.05, el.y - 0.05], [el.x + 0.05, el.y + 0.05]);
+    } else if (el.type === 'fix' || el.type === 'node') pts.push([el.x - 0.05, el.y - 0.05], [el.x + 0.05, el.y + 0.05]);
     else if (el.type === 'curve') {
       const r = propNum(el, 'rho', e, 0.5);
       let a0 = el.a0 ?? 200, a1 = el.a1 ?? 340; if (a1 < a0) a1 += 360;
@@ -820,6 +854,12 @@ function panelModel() {
         break;
       case 'pin': h += angleField('Richtung' + unitTag('°'), el) + '<p class="muted">Festlager: Punkt unverschieblich, Drehung frei.</p>'; break;
       case 'roller': h += angleField('Richtung' + unitTag('°'), el) + '<p class="muted">Loslager/Gleitlager: Verschiebung in Richtung des Lagers gesperrt, quer dazu frei.</p>'; break;
+      case 'node': {
+        const n = state.sys.elements.filter((x) => isLine(x) && (x.a?.el === el.id || x.b?.el === el.id)).length;
+        h += `<p class="muted">Masseloser Verbindungspunkt mit ${n} angeschlossenen Element${n === 1 ? '' : 'en'}. Zwei Elemente in Reihe werden zu einem Ersatzelement zusammengefasst (z. B. 1/k = 1/k₁ + 1/k₂). Der Knoten muss auf der Verbindungslinie der äußeren Enden liegen.</p>`;
+        if (n !== 2) h += '<p class="msg warn">Für eine Reihenschaltung müssen genau zwei Elemente angeschlossen sein.</p>';
+        break;
+      }
       case 'hinge': h += '<p class="muted">Gelenk: Anschlusspunkte beider Körper bleiben zusammen, relative Drehung frei.</p>'; break;
       case 'contact': {
         const b = byId(el.body);

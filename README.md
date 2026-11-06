@@ -7,6 +7,7 @@ Browser-App zum **Zeichnen, Herleiten und Simulieren ebener Mehrkörpersysteme**
    Rollen ohne Gleiten, Gleiten (Führung), Seil, Feder, Dämpfer, Feder ∥ Dämpfer, Drehfeder, Drehdämpfer, Kraft F(t), Moment M(t).
    Stäbe werden über Anfangs- und Endpunkt gezeichnet (auch schräg), Kreisbahnen (Mulde/Kuppe) führen rollende oder gleitende
    Scheiben und Punktmassen. Seile/Federn dürfen freie Enden haben; Lager werden immer selbst gesetzt.
+   Über masselose Knoten verbundene Elemente (Reihenschaltung) werden zu Ersatzelementen zusammengefasst (1/k = 1/k₁ + 1/k₂).
 2. **Freiheitsgrade & Methode festlegen** – Lagrange 1. Art, Lagrange 2. Art oder d'Alembert-Lagrange,
    jeweils **linearisiert** (kleine Auslenkungen) oder **nichtlinear**. Freiheitsgrade (x, y, φ je Körper, mit positiver Richtung)
    werden in der Oberfläche gewählt, der Freiheitsgrad f wird automatisch geprüft.

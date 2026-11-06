@@ -10,6 +10,7 @@ export const TYPES = {
   ground: { name: 'Boden / Bahn' },
   curve: { name: 'Kreisbahn' },
   fix: { name: 'Festpunkt / Wand' },
+  node: { name: 'Knoten (masselos)' },
   pin: { name: 'Festlager' },
   roller: { name: 'Loslager (Gleitlager)' },
   hinge: { name: 'Gelenk' },
@@ -122,7 +123,7 @@ export function ports(el, env) {
       push('q2', rot([mul(num(1, 2), h), ZERO], tr));
       break;
     }
-    case 'point': case 'fix':
+    case 'point': case 'fix': case 'node':
       push('c', [ZERO, ZERO]);
       break;
   }

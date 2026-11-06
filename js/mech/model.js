@@ -44,6 +44,88 @@ export function paramEnv(sys) {
   return env;
 }
 
+/** Reihenschaltungen über masselose Knoten zu Ersatzelementen zusammenfassen.
+ *  Liefert { skip: Set(Linien-IDs), lines: [Ersatzelemente], series: [Info], warnings, errors } */
+export function resolveSeries(sys, env) {
+  const byId = new Map(sys.elements.map((e) => [e.id, e]));
+  const isNode = (ref) => ref?.el && byId.get(ref.el)?.type === 'node';
+  const lines = sys.elements.filter((e) => isLine(e));
+  const atNode = new Map();
+  for (const l of lines) for (const k of ['a', 'b']) if (isNode(l[k])) {
+    if (!atNode.has(l[k].el)) atNode.set(l[k].el, []);
+    atNode.get(l[k].el).push({ l, k });
+  }
+  const out = { skip: new Set(), lines: [], series: [], warnings: [] };
+  const used = new Set();
+  const wrap = (x) => '(' + x + ')';
+  for (const l0 of lines) {
+    if (used.has(l0.id) || (!isNode(l0.a) && !isNode(l0.b))) continue;
+    // Kette in beide Richtungen verfolgen
+    const chain = [l0];
+    used.add(l0.id);
+    let ok = true;
+    const walk = (line, endKey, pushFront) => {
+      let ref = line[endKey];
+      let cur = line;
+      while (isNode(ref)) {
+        const list = atNode.get(ref.el) || [];
+        if (list.length !== 2) {
+          ok = false;
+          out.warnings.push(list.length === 1
+            ? 'Knoten mit nur einem angeschlossenen Element: ' + TYPES[cur.type].name + ' hat damit ein freies Ende und überträgt keine Kraft.'
+            : 'Knoten mit ' + list.length + ' Elementen wird nicht unterstützt (nur zwei Elemente in Reihe). Die Elemente werden ignoriert.');
+          return null;
+        }
+        const nxt = list.find((x) => x.l !== cur);
+        if (!nxt || used.has(nxt.l.id)) { ok = false; return null; }
+        used.add(nxt.l.id);
+        pushFront ? chain.unshift(nxt.l) : chain.push(nxt.l);
+        const farKey = nxt.k === 'a' ? 'b' : 'a';
+        ref = nxt.l[farKey];
+        cur = nxt.l;
+      }
+      return ref;
+    };
+    const endB = walk(l0, 'b', false);
+    const endA = walk(l0, 'a', true);
+    for (const c of chain) out.skip.add(c.id);
+    if (!ok) continue;
+    if (!endA?.el || !endB?.el) { out.warnings.push('Reihenschaltung ' + chain.map((c) => TYPES[c.type].name).join(' – ') + ' hat ein freies Ende und überträgt keine Kraft.'); continue; }
+    // Art der Ersatzschaltung
+    const ks = chain.filter((c) => c.type === 'spring').map((c) => c.props.k);
+    const ds = chain.filter((c) => c.type === 'damper').map((c) => c.props.d);
+    const sd = chain.filter((c) => c.type === 'springdamper');
+    const label = chain.map((c) => c.props.k || c.props.d || 'Seil').join(' – ');
+    if ((ks.length && ds.length) || sd.length > 1 || (sd.length && (ks.length || ds.length))) {
+      throw new Error('Reihenschaltung ' + label + ': Feder und Dämpfer in Reihe (Maxwell-Element) besitzen einen inneren Freiheitsgrad und werden nicht unterstützt.');
+    }
+    const seriesOf = (list) => {
+      if (list.length === 1) return list[0];
+      const prod = list.map(wrap).join('*');
+      const sum = list.map((_, j) => list.filter((__, i) => i !== j).map(wrap).join('*')).join('+');
+      return prod + '/(' + sum + ')';
+    };
+    const L0 = chain.map((c) => wrap(c.props.L0)).join('+');
+    let el;
+    if (sd.length) el = { type: 'springdamper', props: { k: sd[0].props.k, d: sd[0].props.d, L0 } };
+    else if (ks.length) el = { type: 'spring', props: { k: seriesOf(ks), L0 } };
+    else if (ds.length) el = { type: 'damper', props: { d: seriesOf(ds), L0 } };
+    else el = { type: 'rope', props: { L0 } };
+    // Knoten müssen auf der Verbindungslinie liegen
+    const A = portWorld(byId.get(endA.el), endA.port, env), B = portWorld(byId.get(endB.el), endB.port, env);
+    const len = Math.hypot(B[0] - A[0], B[1] - A[1]) || 1;
+    for (const c of chain) for (const k of ['a', 'b']) if (isNode(c[k])) {
+      const n = byId.get(c[k].el);
+      const dist = Math.abs((B[0] - A[0]) * (A[1] - n.y) - (A[0] - n.x) * (B[1] - A[1])) / len;
+      if (dist > 0.01 * len + 1e-4) throw new Error('Reihenschaltung ' + label + ': Der Knoten muss auf der Verbindungslinie der äußeren Enden liegen (ein masseloser Knoten stellt sich gerade ein).');
+    }
+    Object.assign(el, { id: 'ser_' + chain[0].id, a: endA, b: endB, label: '(Reihe ' + label + ')', chain });
+    out.lines.push(el);
+    out.series.push({ chain, el });
+  }
+  return out;
+}
+
 const angleDeg = (a, b) => (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI;
 
 export function buildModel(sys) {
@@ -161,7 +243,10 @@ export function buildModel(sys) {
     return dL;
   }
 
-  for (const el of sys.elements) {
+  const ser = resolveSeries(sys, env);
+  warnings.push(...ser.warnings);
+  const series = ser.series;
+  for (const el of [...sys.elements.filter((e) => !ser.skip.has(e.id)), ...ser.lines]) {
     const nm = elName(el);
     switch (el.type) {
       case 'pin': {
@@ -248,7 +333,7 @@ export function buildModel(sys) {
   const Ut = add(...tsprings.map((s) => mul(num(1, 2), s.k, pow(s.rel, 2))));
   const U = add(Ug, Us, Ut);
 
-  return { sys, env, refEnv, warnings, bodies, bodyOf, absCoords, cons, springs, dampers, tsprings, tdampers, loads, moments, g, U, Ug, lineInfo, elName };
+  return { sys, env, refEnv, warnings, series, bodies, bodyOf, absCoords, cons, springs, dampers, tsprings, tdampers, loads, moments, g, U, Ug, lineInfo, elName };
 }
 
 /** Numerische Jacobi-Matrix der Bindungen in der Bezugslage */

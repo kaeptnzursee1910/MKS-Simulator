@@ -3,7 +3,7 @@ import {
   fn, ratsimp, trigsimp, leadingNegative, add, mul, pow, MONE, ZERO, num, sym, diff, subs, simplify, sqrtsimp, series, truncate, isZero, termsOf, freeSyms, evalNum, info,
 } from '../cas/expr.js';
 import { tex, eqTex, matTex as matTex0, vecTex as vecTex0 } from '../cas/latex.js';
-import { paramSym } from '../cas/parse.js';
+import { paramSym, parse } from '../cas/parse.js';
 import { buildModel } from './model.js';
 import { setupDofs, analyze, linearKinematics, exactKinematics } from './kinematics.js';
 import { gaussSolve, makeTestEnvs, independentRows } from './linalg.js';
@@ -128,6 +128,7 @@ export function derive(sys) {
   const lin = sys.mode === 'linear';
   const method = sys.method || 'L2';
   ABBR = new Map();
+  SERIES_NAMES = new Map();
   let res;
   if (method === 'L1') res = deriveL1(model, dofs, lin, an);
   else {
@@ -154,6 +155,16 @@ function introRows(doc, model, dofs, lin, an) {
     doc.math(q.tex + ' = ' + (q.sign === 1 ? '' : '-') + q.abs.tex, `${d.coord === 'phi' ? 'Drehwinkel' : 'Verschiebung'} von Körper ${model.bodies.find((b) => [b.X, b.Y, b.TH].includes(q.abs)).label}, ${dir}`);
   }
   for (const w of model.warnings || []) doc.text('Hinweis: ' + w);
+  for (const sr of model.series || []) {
+    const el = sr.el;
+    const kind = el.type === 'spring' ? 'Ersatzfeder' : el.type === 'damper' ? 'Ersatzdämpfer' : el.type === 'rope' ? 'Ersatzseil' : 'Ersatzelement';
+    doc.text('Reihenschaltung über masselose Knoten (' + el.label.replace(/^\(Reihe |\)$/g, '') + '): Der Knoten stellt sich so ein, dass alle Elemente dieselbe Kraft übertragen ⇒ ' + kind + ':');
+    const parts = [];
+    if (el.type === 'spring') parts.push('k_{\\mathrm{ers}} = ' + tex(simplify(parse(el.props.k))));
+    if (el.type === 'damper') parts.push('d_{\\mathrm{ers}} = ' + tex(simplify(parse(el.props.d))));
+    parts.push('l_{0,\\mathrm{ers}} = ' + tex(simplify(parse(el.props.L0))));
+    doc.math(parts.join(', \\qquad '));
+  }
   if (lin) doc.text('Linearisierung: kleine Auslenkungen um die gezeichnete Lage q = 0. Energien werden bis zur 2. Ordnung entwickelt, die Bewegungsgleichungen sind damit linear.');
 }
 
@@ -247,21 +258,21 @@ function deriveL2DAL(model, dofs, kin, lin, method, an) {
     }
     for (const s of model.springs) {
       const dl = dLq.get(s.el.id);
-      doc.math('\\Delta l_{' + texName(s.k) + '} = ' + TX(dl), 'Längenänderung ' + model.elName(s.el));
-      Uparts.push({ label: 'U_{' + texName(s.k) + '}', U: S(mul(num(1, 2), s.k, pow(dl, 2))) });
+      doc.math('\\Delta l_{' + texName(s.k, s) + '} = ' + TX(dl), 'Längenänderung ' + model.elName(s.el));
+      Uparts.push({ label: 'U_{' + texName(s.k, s) + '}', U: S(mul(num(1, 2), s.k, pow(dl, 2))) });
     }
-    for (const s of model.tsprings) Uparts.push({ label: 'U_{' + texName(s.k) + '}', U: S(mul(num(1, 2), s.k, pow(relq(s.rel), 2))) });
+    for (const s of model.tsprings) Uparts.push({ label: 'U_{' + texName(s.k, s) + '}', U: S(mul(num(1, 2), s.k, pow(relq(s.rel), 2))) });
     for (const u of Uparts) doc.math(u.label + ' = ' + TX(u.U));
     let U = S(add(...Uparts.map((u) => u.U)));
     doc.math('U = ' + TX(U));
 
     const Dparts = [];
-    for (const s of model.dampers) Dparts.push({ label: 'D_{' + texName(s.d) + '}', D: S(mul(num(1, 2), s.d, pow(dLdq.get(s.el.id), 2))) });
-    for (const s of model.tdampers) Dparts.push({ label: 'D_{' + texName(s.d) + '}', D: S(mul(num(1, 2), s.d, pow(reldq(s.rel), 2))) });
+    for (const s of model.dampers) Dparts.push({ label: 'D_{' + texName(s.d, s) + '}', D: S(mul(num(1, 2), s.d, pow(dLdq.get(s.el.id), 2))) });
+    for (const s of model.tdampers) Dparts.push({ label: 'D_{' + texName(s.d, s) + '}', D: S(mul(num(1, 2), s.d, pow(reldq(s.rel), 2))) });
     const D = S(add(...Dparts.map((d) => d.D)));
     if (Dparts.length) {
       doc.sec('Dissipationsfunktion (Rayleigh)', 'D = Σ ½ d (Δl̇)²');
-      for (const s of model.dampers) if (!model.springs.find((x) => x.el === s.el)) doc.math('\\Delta l_{' + texName(s.d) + '} = ' + TX(dLq.get(s.el.id)));
+      for (const s of model.dampers) if (!model.springs.find((x) => x.el === s.el)) doc.math('\\Delta l_{' + texName(s.d, s) + '} = ' + TX(dLq.get(s.el.id)));
       for (const d of Dparts) doc.math(d.label + ' = ' + TX(d.D));
       doc.math('D = ' + TX(D));
     }
@@ -303,10 +314,10 @@ function deriveL2DAL(model, dofs, kin, lin, method, an) {
     }
     doc.sec('Eingeprägte Kräfte und virtuelle Arbeit');
     if (model.g) doc.text('Gewichtskräfte G = m g wirken in negativer y-Richtung.');
-    for (const s of model.springs) doc.math('F_{' + texName(s.k) + '} = ' + TX(s.k) + ' \\, \\Delta l, \\quad \\Delta l = ' + TX(dLq.get(s.el.id)), 'Federkraft ' + model.elName(s.el));
-    for (const s of model.dampers) doc.math('F_{' + texName(s.d) + '} = ' + TX(s.d) + ' \\, \\Delta \\dot l, \\quad \\Delta \\dot l = ' + TX(dLdq.get(s.el.id)), 'Dämpferkraft ' + model.elName(s.el));
-    for (const s of model.tsprings) doc.math('M_{' + texName(s.k) + '} = ' + TX(S(mul(s.k, relq(s.rel)))), 'Drehfeder');
-    for (const s of model.tdampers) doc.math('M_{' + texName(s.d) + '} = ' + TX(S(mul(s.d, reldq(s.rel)))), 'Drehdämpfer');
+    for (const s of model.springs) doc.math('F_{' + texName(s.k, s) + '} = ' + TX(s.k) + ' \\, \\Delta l, \\quad \\Delta l = ' + TX(dLq.get(s.el.id)), 'Federkraft ' + model.elName(s.el));
+    for (const s of model.dampers) doc.math('F_{' + texName(s.d, s) + '} = ' + TX(s.d) + ' \\, \\Delta \\dot l, \\quad \\Delta \\dot l = ' + TX(dLdq.get(s.el.id)), 'Dämpferkraft ' + model.elName(s.el));
+    for (const s of model.tsprings) doc.math('M_{' + texName(s.k, s) + '} = ' + TX(S(mul(s.k, relq(s.rel)))), 'Drehfeder');
+    for (const s of model.tdampers) doc.math('M_{' + texName(s.d, s) + '} = ' + TX(S(mul(s.d, reldq(s.rel)))), 'Drehdämpfer');
     for (const L of model.loads) doc.math('\\mathbf{F} = ' + TX(L.F) + vecTex(L.dir), 'äußere Kraft');
     for (const M of model.moments) doc.math('M = ' + TX(M.M), 'äußeres Moment (positiv gegen Uhrzeigersinn)');
     doc.text("Prinzip von d'Alembert in der Lagrangeschen Fassung: Σ (m r̈ − F)·δr + Σ (J ϑ̈ − M) δϑ = 0 für alle δq ⇒ für jede Koordinate qᵢ:");
@@ -368,7 +379,14 @@ function deriveL2DAL(model, dofs, kin, lin, method, an) {
   };
 }
 
-function texName(e) { return TX(e); }
+let SERIES_NAMES = new Map();
+function texName(e, s) {
+  if (s?.el?.chain) {
+    if (!SERIES_NAMES.has(s.el.id)) SERIES_NAMES.set(s.el.id, SERIES_NAMES.size + 1);
+    return '\\mathrm{R' + SERIES_NAMES.get(s.el.id) + '}';
+  }
+  return TX(e);
+}
 
 // ===================================================================== Lagrange 1. Art
 function deriveL1(model, dofs, lin, an) {
