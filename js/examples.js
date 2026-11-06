@@ -1,7 +1,7 @@
 // Beispielsysteme
 export const EXAMPLES = [
   {
-    name: 'Klausurbeispiel: Stufenrolle mit Feder/Dämpfer',
+    name: 'Anwendungsbeispiel: Stufenrolle mit Feder/Dämpfer',
     sys: {
       elements: [
         { id: 'g1', type: 'ground', x: -0.3, y: 0, angle: 0, len: 0.9 },

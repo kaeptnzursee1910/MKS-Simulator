@@ -160,7 +160,7 @@ const CASES = [
     refLin: ['4/3*m*l^2*Q1dd + 1/2*m*l^2*Q2dd + 3/2*m*g*l*Q1', '1/2*m*l^2*Q1dd + 1/3*m*l^2*Q2dd + 1/2*m*g*l*Q2'],
   },
   {
-    name: 'Klausurbeispiel (Bild): Stufenrolle + Rolle, k ∥ d und k',
+    name: 'Anwendungsbeispiel: Stufenrolle + Rolle, k ∥ d und k',
     modes: ['linear', 'nonlinear'],
     sys: {
       elements: [
