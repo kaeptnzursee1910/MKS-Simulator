@@ -175,8 +175,22 @@ function updateHint() {
       if (state.pending.kind === 'torsion') h = 'Zweiten Körper antippen oder leere Fläche (Umgebung).';
     }
   } else if (state.step === 'dof') h = 'Körper antippen, um seine Koordinaten als Freiheitsgrad zu wählen.';
-  $('#hint').textContent = h;
+  const hint = $('#hint');
+  hint.classList.remove('action');
+  hint.onclick = null;
+  // Handy (Hochformat): Eigenschaften stehen unter der Zeichnung – Hinweis mit Sprung dorthin
+  if (isPortraitPhone() && (state.step === 'model' || state.step === 'dof') && state.sel && !state.pending && state.tool === 'select') {
+    const el = byId(state.sel);
+    if (el) {
+      h = (TYPES[el.type]?.name || 'Element') + (el.label ? ' ' + el.label : '') + ' ausgewählt – Eigenschaften unten ↓';
+      hint.classList.add('action');
+      hint.onclick = () => panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  } else if (isPhone() && h.length > 60) h = h.split(/[.,(]/)[0] + '.';
+  hint.textContent = h;
 }
+const isPhone = () => matchMedia('(max-width: 860px), (max-height: 500px)').matches;
+const isPortraitPhone = () => matchMedia('(max-width: 860px) and (min-height: 501px)').matches;
 
 // ------------------------------------------------------------ Zeichnen
 let V = null;
@@ -369,7 +383,7 @@ function tap(sx, sy, target) {
   if (state.step === 'dof') {
     const b = bodyAt(target, sx, sy);
     state.sel = b ? b.id : null;
-    draw(); renderPanel();
+    draw(); renderPanel(); updateHint();
     return;
   }
   if (state.step !== 'model') return;
@@ -566,7 +580,8 @@ function fitView() {
   const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
   const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
   const W = svg.clientWidth || 600, H = svg.clientHeight || 400;
-  const s = Math.min(1200, (W - 120) / Math.max(0.2, x1 - x0), (H - 120) / Math.max(0.2, y1 - y0));
+  const pad = Math.min(140, Math.max(60, W * 0.2)), padY = Math.min(120, Math.max(60, H * 0.22));
+  const s = Math.min(1200, (W - pad) / Math.max(0.2, x1 - x0), (H - padY) / Math.max(0.2, y1 - y0));
   state.view = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, s: Math.max(60, s) };
   draw(); save();
 }
@@ -590,6 +605,12 @@ window.addEventListener('keydown', (e) => {
   }
 });
 new ResizeObserver(() => draw()).observe(svg);
+// Drehen des Handys: Ansicht neu einpassen
+let lastOrient = matchMedia('(orientation: landscape)').matches;
+window.addEventListener('resize', () => {
+  const o = matchMedia('(orientation: landscape)').matches;
+  if (o !== lastOrient) { lastOrient = o; setTimeout(() => { fitView(); updateHint(); }, 150); }
+});
 
 // ------------------------------------------------------------ Schritte
 function setStep(step) {

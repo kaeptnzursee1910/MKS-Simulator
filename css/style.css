@@ -16,7 +16,7 @@
   color: var(--ink);
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: var(--bg); }
+html, body { margin: 0; height: 100%; background: var(--bg); -webkit-text-size-adjust: 100%; }
 body { overflow: hidden; }
 button { font: inherit; color: inherit; cursor: pointer; }
 input, select { font: inherit; color: inherit; }
@@ -181,23 +181,78 @@ code { background: #eeece6; padding: 0 4px; border-radius: 4px; }
 #canvas .dof { color: var(--accent); }
 
 /* ---------- Mobil */
-@media (max-width: 860px) {
+/* ---------- Handy: Hochformat – Seite scrollt, Zeichenfläche oben */
+@media (max-width: 860px) and (min-height: 501px) {
   :root { --top: 50px; }
+  html, body { height: auto; }
+  body { overflow: visible; overflow-x: hidden; }
+  #panel { scroll-margin-top: calc(var(--top) + 90px); }
+  .topbar { position: sticky; top: 0; padding: 0 8px; padding-top: env(safe-area-inset-top); height: calc(var(--top) + env(safe-area-inset-top)); }
   .brand-text { display: none; }
   .steps { margin: 0 auto 0 0; gap: 2px; }
-  .steps button { padding: 5px 7px; gap: 4px; }
+  .steps button { padding: 5px 7px; gap: 4px; min-height: 36px; }
   .steps button span { display: none; }
   .steps button.active span { display: inline; font-size: 13px; }
-  #app, #app.step-dof, #app.step-sim {
-    grid-template-columns: 1fr; grid-template-rows: auto minmax(240px, 52vh) 1fr;
+  #app, #app.step-dof, #app.step-sim, #app.step-eq { position: static; display: block; }
+  #palette {
+    display: flex; overflow-x: auto; overflow-y: hidden; border-right: 0; border-bottom: 1px solid var(--line);
+    padding: 4px; gap: 2px; position: sticky; top: calc(var(--top) + env(safe-area-inset-top)); z-index: 10;
+    scrollbar-width: none;
   }
-  #app.step-dof, #app.step-sim { grid-template-rows: minmax(240px, 46vh) 1fr; }
-  #palette { display: flex; overflow-x: auto; overflow-y: hidden; border-right: 0; border-bottom: 1px solid var(--line); padding: 4px; gap: 2px; }
+  #palette::-webkit-scrollbar { display: none; }
+  #app.step-dof #palette, #app.step-sim #palette, #app.step-eq #palette { display: none; }
   .pal-group { display: none; }
-  .tool { width: 64px; flex: 0 0 64px; }
-  #panel { border-left: 0; border-top: 1px solid var(--line); }
-  .hint { right: 10px; bottom: 50px; font-size: 12px; }
+  .tool { width: 60px; flex: 0 0 60px; padding: 2px; }
+  .tool svg { width: 34px; height: 26px; }
+  #stage { height: clamp(280px, 58svh, 620px); border-bottom: 1px solid var(--line); }
+  #app.step-eq #stage { display: none; }
+  /* Simulation: Animation bleibt beim Scrollen zu den Diagrammen sichtbar */
+  #app.step-sim #stage { position: sticky; top: calc(var(--top) + env(safe-area-inset-top)); z-index: 5; height: clamp(220px, 42svh, 480px); }
+  #panel { border-left: 0; overflow: visible; padding: 12px 14px calc(40px + env(safe-area-inset-bottom)); }
+  #eqview { overflow: visible; padding: 12px 10px calc(60px + env(safe-area-inset-bottom)); }
+  .eq-head h2 { flex-basis: 100%; }
+  .eq-sec { padding: 8px 10px; }
+  .eq-row { flex-direction: column; gap: 0; align-items: stretch; }
+  .eq-row .note { white-space: normal; }
+}
+@media (max-width: 360px) {
+  .brand { display: none; }
+  .steps button { padding: 4px 5px; }
+  .steps button b { width: 20px; height: 20px; }
+  .icon-btn { width: 34px; }
+}
+/* ---------- Handy: Querformat – Palette | Zeichnung | Panel nebeneinander */
+@media (max-height: 500px) and (orientation: landscape) {
+  :root { --top: 44px; }
+  .topbar { padding-left: max(8px, env(safe-area-inset-left)); padding-right: max(8px, env(safe-area-inset-right)); }
+  .brand-text { display: none; }
+  .steps button { padding: 4px 8px; }
+  .steps button span { display: none; }
+  .steps button.active span { display: inline; font-size: 13px; }
+  #app { grid-template-columns: 64px 1fr min(320px, 40vw); padding-left: env(safe-area-inset-left); }
+  #app.step-dof, #app.step-sim { grid-template-columns: 1fr min(340px, 45vw); }
+  .pal-group { display: none; }
+  .tool { padding: 2px; }
+  .tool svg { width: 32px; height: 24px; }
+  .tool span { font-size: 9.5px; }
+  #panel { padding: 8px 10px calc(30px + env(safe-area-inset-bottom)); padding-right: max(10px, env(safe-area-inset-right)); }
+  .zoom-ctl button { width: 30px; height: 30px; }
+}
+/* ---------- Touch-Geräte allgemein */
+@media (max-width: 860px), (max-height: 500px) {
+  .hint { top: 8px; bottom: auto; left: 8px; right: 8px; font-size: 12px; line-height: 1.3; }
+  .hint.action { pointer-events: auto; color: var(--accent); background: var(--accent-soft); cursor: pointer; }
   .field { grid-template-columns: 96px 1fr; }
+  .player { top: 6px; left: 6px; right: 6px; padding: 4px 8px; gap: 6px; }
+  .player .time { min-width: 0; }
+  .dropdown { position: fixed; right: 8px; left: auto; top: calc(var(--top) + 4px); max-height: 75vh; overflow: auto; }
+}
+@media (pointer: coarse) {
+  /* iOS zoomt bei Schrift < 16px in Eingabefeldern – verhindern */
+  input, select, textarea { font-size: 16px !important; }
+  .seg button, .chip, .btn.small { min-height: 34px; }
+  .chip { min-width: 38px; }
+  .zoom-ctl button { width: 40px; height: 40px; }
 }
 
 .eq-row .katex-display { margin: 0.25em 0; text-align: left; }
