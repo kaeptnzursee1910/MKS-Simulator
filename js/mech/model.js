@@ -126,6 +126,17 @@ export function resolveSeries(sys, env) {
   return out;
 }
 
+/** Gleitet eine Punktmasse auf einer Kreisbahn? (dann ist der Bahnwinkel eine Koordinate) */
+export function pointOnCurve(sys, el, onlyIfChosen = true) {
+  if (el.type !== 'point') return false;
+  const on = sys.elements.some((c) => c.type === 'contact' && c.body === el.id && sys.elements.find((g) => g.id === c.ground)?.type === 'curve');
+  if (!on || !onlyIfChosen) return on;
+  // Bahnwinkel nur als Koordinate führen, wenn er gewählt ist (oder noch nichts gewählt ist → Vorschlag),
+  // sonst bleibt z. B. x als Freiheitsgrad geschlossen auflösbar
+  const dofs = sys.dofs || [];
+  return !dofs.some((d) => d.body === el.id) || dofs.some((d) => d.body === el.id && d.coord === 'phi');
+}
+
 const angleDeg = (a, b) => (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI;
 
 export function buildModel(sys) {
@@ -139,13 +150,16 @@ export function buildModel(sys) {
     idx++;
     const lab = el.label || String(idx);
     const o = idx * 10;
+    // Punktmasse auf Kreisbahn: Bahnwinkel ψ als zusätzliche Lagekoordinate (ohne Drehträgheit)
+    const onCurve = pointOnCurve(sys, el);
     const b = {
       el, label: lab,
       m: propExpr(el, 'm'),
-      J: hasRotation(el) ? propExpr(el, 'J') : null,
+      J: hasRotation(el) ? propExpr(el, 'J') : onCurve ? ZERO : null,
       X: makeCoord('X_' + el.id, 'x_{' + lab + '}', o + 1),
       Y: makeCoord('Y_' + el.id, 'y_{' + lab + '}', o + 2),
-      TH: hasRotation(el) ? makeCoord('T_' + el.id, '\\vartheta_{' + lab + '}', o + 3) : null,
+      TH: hasRotation(el) ? makeCoord('T_' + el.id, '\\vartheta_{' + lab + '}', o + 3) : onCurve ? makeCoord('T_' + el.id, '\\psi_{' + lab + '}', o + 3) : null,
+      pathAngle: onCurve,
     };
     bodies.push(b);
     bodyOf.set(el.id, b);
@@ -196,7 +210,12 @@ export function buildModel(sys) {
     const rc = add(rho, mul(-sIn, R)); // Bahnradius des Schwerpunkts
     const beta = (Math.atan2(dy, dx) * 180) / Math.PI;
     const [cb, sb] = exactTrig(beta, 0.5);
-    if (el.mode === 'roll') {
+    if (b.pathAngle) {
+      // Punktmasse: Lage über den Bahnwinkel ψ (Auslenkung aus der gezeichneten Lage β)
+      const c = cos(b.TH.s), sn = sin(b.TH.s);
+      cons.push({ expr: add(b.X.s, mul(MONE, rc, add(mul(cb, c), mul(MONE, sb, sn), mul(MONE, cb)))), label: nm + ' (auf Kreisbahn, x)', el });
+      cons.push({ expr: add(b.Y.s, mul(MONE, rc, add(mul(sb, c), mul(cb, sn), mul(MONE, sb)))), label: nm + ' (auf Kreisbahn, y)', el });
+    } else if (el.mode === 'roll') {
       if (b.el.type !== 'disk') throw new Error('Rollen ohne Gleiten ist nur für Scheiben möglich.');
       // Rollbedingung integriert: Bahnwinkel ψ − β = −s·R·ϑ / r_c
       const dpsi = mul(-sIn, R, b.TH.s, pow(rc, MONE));
@@ -237,8 +256,10 @@ export function buildModel(sys) {
       return { d: disp(X.body, p.s), w: ZERO, wound: false };
     };
     const a = part(A), b = part(B);
-    const dx = add(mul(L0, e[0]), b.d[0], mul(MONE, a.d[0]));
-    const dy = add(mul(L0, e[1]), b.d[1], mul(MONE, a.d[1]));
+    // Länge in der Zeichnung: standardmäßig entspannt (= l₀), bei Vorspannung eigene Angabe
+    const Ld = el.props.Lz !== undefined && String(el.props.Lz).trim() ? propExpr(el, 'Lz') : L0;
+    const dx = add(mul(Ld, e[0]), b.d[0], mul(MONE, a.d[0]));
+    const dy = add(mul(Ld, e[1]), b.d[1], mul(MONE, a.d[1]));
     let dL = add(sqrt(add(pow(dx, 2), pow(dy, 2))), mul(MONE, L0), b.w, mul(MONE, a.w));
     dL = simplify(sqrtsimp(simplify(dL), refEnv));
     const infoL = { A, B, e, ang, wound: [a.wound, b.wound], L0, dx, dy };

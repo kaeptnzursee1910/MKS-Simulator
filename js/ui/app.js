@@ -1,6 +1,6 @@
 // Hauptsteuerung der Benutzeroberfläche
 import { TYPES, isBody, isLine, hasRotation, ports, portWorld, propNum, propExpr, findPort } from '../mech/elements.js';
-import { ensureParams, usedParams, paramEnv, buildModel } from '../mech/model.js';
+import { ensureParams, usedParams, paramEnv, buildModel, pointOnCurve } from '../mech/model.js';
 import { setupDofs, analyze, suggestDofs } from '../mech/kinematics.js';
 import { derive, METHODS } from '../mech/derive.js';
 import { compile, simulate, INTEGRATORS, evalInput } from '../mech/numeric.js';
@@ -525,6 +525,11 @@ function targetPoints(skip) {
   for (const el of state.sys.elements) {
     if (skip.has(el.id)) continue;
     pts.push(...snapPoints(el));
+    if (el.type === 'curve') {
+      const rho = propNum(el, 'rho', env(), 0.5);
+      pts.push([el.x, el.y]);
+      for (const a of [el.a0 ?? 200, el.a1 ?? 340]) pts.push([round6(el.x + rho * Math.cos((a * Math.PI) / 180)), round6(el.y + rho * Math.sin((a * Math.PI) / 180))]);
+    }
     if (isLine(el)) for (const k of ['a', 'b']) if (el[k] && !el[k].el && Number.isFinite(el[k].x)) pts.push([el[k].x, el[k].y]);
   }
   return pts;
@@ -586,10 +591,27 @@ function autoGuide(line) {
     toast(bodyName(X) + ' wird senkrecht geführt (wie in der Skizze) – änderbar unter „Führung“.', 3800);
   }
 }
+/** gezeichnete Länge als Ausdruck vorschlagen: Vielfaches von l₀ (√2·r, 2·r …) oder Zahlenwert */
+function drawnLengthExpr(el, L) {
+  let L0n;
+  try { L0n = propNum(el, 'L0', env(), NaN); } catch { L0n = NaN; }
+  if (!Number.isFinite(L0n) || L0n <= 0) return String(round3(L));
+  const q = L / L0n;
+  if (Math.abs(q - 1) < 0.005) return '';
+  const src = String(el.props.L0).trim();
+  const base = /^[A-Za-z0-9_.]+$/.test(src) ? src : '(' + src + ')';
+  const C = [['sqrt(2)', Math.SQRT2], ['sqrt(3)', Math.sqrt(3)], ['sqrt(5)', Math.sqrt(5)], ['2', 2], ['3', 3], ['4', 4], ['1/2', 0.5], ['3/2', 1.5],
+    ['sqrt(2)/2', Math.SQRT1_2], ['sqrt(3)/2', Math.sqrt(3) / 2], ['2*sqrt(2)', 2 * Math.SQRT2], ['1/3', 1 / 3], ['2/3', 2 / 3]];
+  for (const [t, v] of C) if (Math.abs(q - v) < 0.002 * v) return t + '*' + base;
+  return String(round3(L));
+}
 function updateAutoL0() {
-  for (const el of state.sys.elements) if (isLine(el) && el.L0auto) {
+  for (const el of state.sys.elements) {
+    if (!isLine(el)) continue;
     const L = lineLength(el);
-    if (L > 1e-6) el.props.L0 = String(round3(L));
+    if (L <= 1e-6) continue;
+    if (el.L0auto) el.props.L0 = String(round3(L));
+    else if (el.L0auto === false && el.type !== 'rope' && el.LzAuto !== false) { el.props.Lz = drawnLengthExpr(el, L); el.LzAuto = true; }
   }
 }
 function groundDistance(body, g) {
@@ -817,7 +839,8 @@ function tap(sx, sy, target) {
         const fe = freeEndAt(sx, sy);
         if (fe) { const n = nodeAtFreeEnd(fe); p = { el: n.id, port: 'c' }; }
       }
-      const endRef = p || { x: ws[0], y: ws[1] };
+      let endRef = p;
+      if (!endRef) { const al = alignOffset([ws], new Set()); endRef = { x: round6(ws[0] + al.dx), y: round6(ws[1] + al.dy) }; }
       if (!state.pending) {
         state.pending = { kind: 'line', a: endRef };
         state.pointerW = w;
@@ -1168,7 +1191,8 @@ function panelModel() {
       case 'curve':
         h += exprField('Radius ρ', 'rho', el);
         h += field('Bogen von' + unitTag('°'), 'a0', el.a0 ?? 200, { type: 'number', attrs: 'step="5"' }) + field('Bogen bis' + unitTag('°'), 'a1', el.a1 ?? 340, { type: 'number', attrs: 'step="5"' });
-        h += `<div class="field"><label>Art</label><div class="seg"><button data-concave="1" class="${el.concave !== false ? 'on' : ''}">Mulde (innen)</button><button data-concave="0" class="${el.concave === false ? 'on' : ''}">Kuppe (außen)</button></div></div>`;
+        h += `<div class="field"><label>Art</label><div class="seg"><button data-concave="1" class="${el.concave !== false ? 'on' : ''}">◡ Mulde</button><button data-concave="0" class="${el.concave === false ? 'on' : ''}">◠ Kuppe</button></div></div>`;
+        h += `<div class="field"><label>Bogen</label><div class="row"><button class="btn small" data-arc="half">Halbkreis</button><button class="btn small" data-arc="flat">flach</button></div></div>`;
         h += '<p class="muted">Kreisförmige Bahn um den Mittelpunkt. Scheiben (Rollen/Gleiten) und Punktmassen (Gleiten) laufen innen (Mulde) oder außen (Kuppe). Werkzeug „Rollen“ bzw. „Gleiten“ auf den Körper anwenden.</p>';
         break;
       case 'pin': h += angleField('Richtung' + unitTag('°'), el) + '<p class="muted">Festlager: Punkt unverschieblich, Drehung frei.</p>'; break;
@@ -1196,6 +1220,7 @@ function panelModel() {
         if (el.props.k !== undefined) h += exprField('Steifigkeit k', 'k', el);
         if (el.props.d !== undefined) h += exprField('Dämpfung d', 'd', el);
         h += exprField(el.type === 'rope' ? 'Seillänge l₀' : 'Länge l₀ (entspannt)', 'L0', el);
+        if (el.type !== 'rope' && !el.L0auto) h += exprField('Länge in der Zeichnung', 'Lz', el);
         {
           const endTxt = (r) => (r?.el ? (byId(r.el)?.type === 'fix' ? 'Lager/Festpunkt' : TYPES[byId(r.el)?.type]?.name + ' ' + (byId(r.el)?.label || '')) : '<b style="color:var(--warn)">frei</b>');
           h += `<div class="field"><label>Enden</label><span style="font-size:14px">${endTxt(el.a)} – ${endTxt(el.b)}</span></div>`;
@@ -1203,7 +1228,8 @@ function panelModel() {
           else h += '<p class="muted">Enden (□) lassen sich auf andere Anschlusspunkte ziehen oder lösen.</p>';
         }
         h += `<div class="field"><label></label><label class="row"><input type="checkbox" data-l0auto ${el.L0auto ? 'checked' : ''}> l₀ aus Zeichnung übernehmen</label></div>`;
-        h += '<p class="muted">l₀ geht nur in die nichtlineare Rechnung ein. Liegt ein Ende tangential an einer Scheibe, wird es als aufgewickelt behandelt.</p>';
+        if (el.type !== 'rope' && !el.L0auto && el.props.Lz) h += '<p class="muted">Gezeichnete Länge ≠ l₀: Die Feder ist in der gezeichneten Lage vorgespannt (z. B. „im entspannten Zustand Länge r“). Die gezeichnete Länge wird aus der Zeichnung vorgeschlagen.</p>';
+        h += '<p class="muted">Liegt ein Ende tangential an einer Scheibe, wird es als aufgewickelt behandelt.</p>';
         break;
       case 'tspring': h += exprField('Drehsteifigkeit', 'kt', el); break;
       case 'tdamper': h += exprField('Drehdämpfung', 'dt', el); break;
@@ -1251,7 +1277,8 @@ function bindModelPanel(el) {
     inp.addEventListener('input', () => {
       const k = inp.dataset.prop;
       el.props[k] = inp.value;
-      if (k === 'L0') el.L0auto = false;
+      if (k === 'L0') { el.L0auto = false; updateAutoL0(); const lz = panel.querySelector('[data-prop="Lz"]'); if (lz && document.activeElement !== lz) lz.value = el.props.Lz || ''; }
+      if (k === 'Lz') el.LzAuto = false;
       const bad = inp.value !== '' && tryParse(inp.value).error;
       inp.classList.toggle('bad', !!bad);
       if (!bad) { changed({ typing: true }); updateAutoL0(); }
@@ -1271,9 +1298,27 @@ function bindModelPanel(el) {
   const setAngle = (ang) => setElAngle(el, ang);
   panel.querySelectorAll('[data-rot]').forEach((b) => b.addEventListener('click', () => rotateBy(el, Number(b.dataset.rot))));
   panel.querySelector('[data-bool]')?.addEventListener('change', (e) => { el.props[e.target.dataset.bool] = e.target.checked; changed(); panelModel(); });
-  panel.querySelector('[data-l0auto]')?.addEventListener('change', (e) => { el.L0auto = e.target.checked; updateAutoL0(); changed(); panelModel(); });
+  panel.querySelector('[data-l0auto]')?.addEventListener('change', (e) => { el.L0auto = e.target.checked; if (el.L0auto) { delete el.props.Lz; delete el.LzAuto; } updateAutoL0(); changed(); panelModel(); });
   panel.querySelectorAll('[data-fstyle]').forEach((b) => b.addEventListener('click', () => { if (b.dataset.fstyle === 'pin') { el.style = 'pin'; el.angle = -90; } else { delete el.style; } changed(); panelModel(); }));
-  panel.querySelectorAll('[data-concave]').forEach((b) => b.addEventListener('click', () => { el.concave = b.dataset.concave === '1'; changed(); panelModel(); }));
+  panel.querySelectorAll('[data-concave]').forEach((b) => b.addEventListener('click', () => {
+    const cc = b.dataset.concave === '1';
+    if (cc !== (el.concave !== false)) {
+      // Bogen an der Waagrechten spiegeln; tiefster bzw. höchster Punkt bleibt an seiner Stelle
+      const rho = propNum(el, 'rho', env(), 0.5);
+      const a0 = el.a0 ?? 200, a1 = el.a1 ?? 340;
+      el.a0 = 360 - a1; el.a1 = 360 - a0;
+      if (el.a0 >= 360) { el.a0 -= 360; el.a1 -= 360; }
+      el.y = round6(el.y + (cc ? 2 : -2) * rho);
+      el.concave = cc;
+      for (const c of state.sys.elements.filter((x) => x.type === 'contact' && x.ground === el.id)) placeOnGround(byId(c.body), el);
+    }
+    updateAutoL0(); changed(); panelModel();
+  }));
+  panel.querySelectorAll('[data-arc]').forEach((b) => b.addEventListener('click', () => {
+    const up = el.concave === false;
+    if (b.dataset.arc === 'half') { el.a0 = up ? 0 : 180; el.a1 = up ? 180 : 360; } else { el.a0 = up ? 20 : 200; el.a1 = up ? 160 : 340; }
+    changed(); panelModel();
+  }));
   panel.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => { el.mode = b.dataset.mode; changed(); panelModel(); }));
   panel.querySelectorAll('[data-mdir]').forEach((b) => b.addEventListener('click', () => { el.dir = Number(b.dataset.mdir); changed(); panelModel(); }));
   panel.querySelector('[data-del]')?.addEventListener('click', () => deleteElement(el.id));
@@ -1321,7 +1366,7 @@ function duplicateSelected() {
 function updateSelTools() {
   const box = $('#seltools');
   const el = state.sel ? byId(state.sel) : null;
-  const show = el && state.step === 'model' && state.tool !== 'delete' && !state.pending && !(gesture && gesture.moved);
+  const show = el && state.step === 'model' && ['select', 'force', 'moment', 'pin', 'roller'].includes(state.tool) && !state.pending && !(gesture && gesture.moved);
   if (!show) { box.hidden = true; return; }
   const g = svg.querySelector(`[data-id="${CSS.escape(el.id)}"]`);
   if (!g) { box.hidden = true; return; }
@@ -1393,7 +1438,7 @@ function panelDof() {
     const b = byId(d.body);
     const dirOpts = d.coord === 'phi' ? [[-1, '↻ im Uhrzeigersinn'], [1, '↺ gegen Uhrzeigersinn']] : d.coord === 'x' ? [[1, '→ nach rechts'], [-1, '← nach links']] : [[1, '↑ nach oben'], [-1, '↓ nach unten']];
     h += `<div class="dof-item" data-dof="${d.id}"><div>
-      <div class="row"><span class="dof-title">${katexStr(nameTex(d.name))}</span><span class="muted">${d.coord === 'phi' ? 'Drehwinkel' : d.coord + '-Verschiebung'} von Körper ${esc(b?.label ?? '?')}</span></div>
+      <div class="row"><span class="dof-title">${katexStr(nameTex(d.name))}</span><span class="muted">${d.coord === 'phi' ? (b?.type === 'point' ? 'Bahnwinkel' : 'Drehwinkel') : d.coord + '-Verschiebung'} von Körper ${esc(b?.label ?? '?')}</span></div>
       <div class="row" style="margin-top:6px"><input class="inp" style="width:110px" data-dname value="${esc(d.name)}" title="Name, z. B. phi_1, x, s">
       <div class="seg">${dirOpts.map(([v, t]) => `<button data-ddir="${v}" class="${d.dir === v ? 'on' : ''}">${t}</button>`).join('')}</div></div></div>
       <button class="btn small danger" data-drem title="Entfernen">×</button></div>`;
@@ -1402,7 +1447,7 @@ function panelDof() {
 
   h += '<h3>Körper</h3><div class="card">';
   for (const b of bodies()) {
-    const rot = hasRotation(b);
+    const rot = hasRotation(b) || pointOnCurve(sys, b, false);
     const has = (c) => sys.dofs.some((d) => d.body === b.id && d.coord === c);
     h += `<div class="body-row ${state.sel === b.id ? 'sel' : ''}" data-body="${b.id}"><span class="bname">${esc(TYPES[b.type].name)} ${esc(b.label)}</span>
       <button class="chip ${has('x') ? 'on' : ''}" data-add="x">x</button><button class="chip ${has('y') ? 'on' : ''}" data-add="y">y</button><button class="chip ${has('phi') ? 'on' : ''}" data-add="phi" ${rot ? '' : 'disabled'}>φ</button></div>`;
@@ -1425,7 +1470,7 @@ function panelDof() {
   });
   panel.querySelector('[data-suggest]')?.addEventListener('click', () => {
     try {
-      const m = buildModel(sys);
+      const m = buildModel({ ...sys, dofs: [] });
       const s = suggestDofs(m);
       sys.dofs = [];
       for (const c of s) {

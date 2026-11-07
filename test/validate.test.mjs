@@ -293,6 +293,26 @@ const CASES = [
     },
     ref: ['m*l^2/3*Q1dd + d*l^2*(Q1d + Q2d) + k*l^2*(Q1 + Q2) + k_T*Q1 - M_0', 'm*l^2/3*Q2dd + d*l^2*(Q1d + Q2d) + k*l^2*(Q1 + Q2) + k_T*Q2'],
   },
+  {
+    name: 'Punktmasse auf Kreisbahn (Kuppe), zwei vorgespannte Federn l₀ = r, Bahnwinkel (Klausur 2017-1, Aufgabe 2)',
+    modes: ['nonlinear'],
+    symbolic: false,
+    sys: {
+      elements: [
+        { id: 'k1', type: 'curve', x: 0, y: 0, a0: 0, a1: 180, concave: false, props: { rho: 'r' } },
+        { id: 'b1', type: 'point', label: '1', x: 0, y: 0.5, props: { m: 'm' } },
+        { id: 'c1', type: 'contact', body: 'b1', ground: 'k1', mode: 'slide' },
+        { id: 'wA', type: 'fix', x: -0.5, y: 0, angle: -90, style: 'pin' },
+        { id: 'wB', type: 'fix', x: 0.5, y: 0, angle: -90, style: 'pin' },
+        { id: 's1', type: 'spring', a: { el: 'wA', port: 'c' }, b: { el: 'b1', port: 'c' }, props: { k: 'k', L0: 'r', Lz: 'sqrt(2)*r' } },
+        { id: 's2', type: 'spring', a: { el: 'wB', port: 'c' }, b: { el: 'b1', port: 'c' }, props: { k: 'k', L0: 'r', Lz: 'sqrt(2)*r' } },
+      ],
+      params: { m: 0.8, r: 0.5, k: 60, g: 9.81 }, gravity: true,
+      dofs: [{ id: 'q1', body: 'b1', coord: 'phi', dir: 1, name: 'phi' }],
+    },
+    // φ = π/2 + q:  m r² q̈ + k r² (sin(φ/2) − cos(φ/2)) + m g r cos φ = 0
+    ref: ['m*r^2*Q1dd + sqrt(2)*k*r^2*sin(Q1/2) - m*g*r*sin(Q1)'],
+  },
 ];
 
 // ------------------------------------------------------------------
