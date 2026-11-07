@@ -1,6 +1,6 @@
 // Hauptsteuerung der Benutzeroberfläche
-import { TYPES, isBody, isLine, hasRotation, ports, portWorld, propNum, propExpr } from '../mech/elements.js';
-import { ensureParams, usedParams, paramEnv, buildModel } from '../mech/model.js';
+import { TYPES, isBody, isLine, hasRotation, ports, portWorld, propNum, propExpr, findPort } from '../mech/elements.js';
+import { ensureParams, usedParams, paramEnv, buildModel, pointOnCurve } from '../mech/model.js';
 import { setupDofs, analyze, suggestDofs } from '../mech/kinematics.js';
 import { derive, METHODS } from '../mech/derive.js';
 import { compile, simulate, INTEGRATORS, evalInput } from '../mech/numeric.js';
@@ -31,6 +31,7 @@ const state = {
   pending: null,
   view: { cx: 0, cy: 0.15, s: 400 },
   hotPort: null,
+  guides: null,
   pointerW: null,
   result: null, resultKey: null, resultError: null,
   cm: null, simOut: null, simError: null,
@@ -69,11 +70,60 @@ function modelKey() {
   return JSON.stringify(rest);
 }
 /** Nach Änderungen am Modell */
-function changed({ keepResult = false } = {}) {
+function changed({ keepResult = false, typing = false } = {}) {
   ensureParams(state.sys);
   if (!keepResult) { state.cm = null; state.simOut = null; stopAnim(); }
   save();
+  // Tippen wird zu einem Schritt zusammengefasst, jede andere Aktion ist ein eigener Schritt
+  if (typing) scheduleCommit(); else commitHistory();
   draw();
+}
+
+// ------------------------------------------------------------ Rückgängig / Wiederholen
+// Jede Modelländerung wird (zusammengefasst über kurze Eingabepausen) als Zustand gemerkt.
+const hist = { undo: [], redo: [], last: null, timer: 0 };
+const HIST_MAX = 100;
+function histSnap() { return JSON.stringify(state.sys); }
+function scheduleCommit() {
+  clearTimeout(hist.timer);
+  hist.timer = setTimeout(commitHistory, 350);
+  updateEditCtl();
+}
+function commitHistory() {
+  clearTimeout(hist.timer);
+  const cur = histSnap();
+  if (hist.last === null) { hist.last = cur; return; }
+  if (cur === hist.last) return;
+  hist.undo.push(hist.last);
+  if (hist.undo.length > HIST_MAX) hist.undo.shift();
+  hist.redo = [];
+  hist.last = cur;
+  updateEditCtl();
+}
+function restoreSnap(json) {
+  state.sys = normalize(JSON.parse(json));
+  hist.last = json;
+  if (state.sel && !byId(state.sel)) state.sel = null;
+  state.pending = null;
+  state.cm = null; state.simOut = null; stopAnim();
+  save(); draw(); renderPanel(); updateHint(); updateEditCtl();
+}
+function undo() {
+  commitHistory();
+  if (!hist.undo.length) { toast('Nichts rückgängig zu machen.'); return; }
+  hist.redo.push(hist.last);
+  restoreSnap(hist.undo.pop());
+}
+function redo() {
+  commitHistory();
+  if (!hist.redo.length) return;
+  hist.undo.push(hist.last);
+  restoreSnap(hist.redo.pop());
+}
+function updateEditCtl() {
+  const u = document.querySelector('[data-edit="undo"]'), r = document.querySelector('[data-edit="redo"]');
+  if (u) u.disabled = !hist.undo.length && histSnap() === hist.last;
+  if (r) r.disabled = !hist.redo.length;
 }
 
 // ------------------------------------------------------------ Hilfen
@@ -122,28 +172,30 @@ const TOOLS = [
   ['Verbinder', [['rope', 'Seil'], ['spring', 'Feder'], ['damper', 'Dämpfer'], ['springdamper', 'Feder ∥ Dämpfer'], ['node', 'Knoten'], ['tspring', 'Dreh­feder'], ['tdamper', 'Dreh­dämpfer']]],
   ['Lasten', [['force', 'Kraft'], ['moment', 'Moment']]],
 ];
-const PORT_TOOLS = new Set(['pin', 'roller', 'hinge', 'rope', 'spring', 'damper', 'springdamper', 'force']);
+const PORT_TOOLS = new Set(['pin', 'roller', 'hinge', 'rope', 'spring', 'damper', 'springdamper', 'force', 'rod']);
 const LINE_TOOLS = new Set(['rope', 'spring', 'damper', 'springdamper']);
+/** Werkzeuge, die zwei Punkte verbinden: Antippen–Antippen oder in einem Zug ziehen */
+const CONNECT_TOOLS = new Set([...LINE_TOOLS, 'hinge', 'tspring', 'tdamper', 'rod']);
 const HINTS = {
-  select: 'Element antippen zum Bearbeiten, Körper ziehen zum Verschieben, Leerfläche ziehen zum Verschieben der Ansicht.',
+  select: 'Element antippen zum Bearbeiten, Körper ziehen zum Verschieben (richtet sich an anderen Punkten aus), Leerfläche ziehen verschiebt die Ansicht.',
   delete: 'Element antippen, um es zu löschen.',
   block: 'Auf die Zeichenfläche tippen, um einen Klotz zu platzieren.',
   disk: 'Auf die Zeichenfläche tippen, um eine Scheibe zu platzieren.',
   stepdisk: 'Auf die Zeichenfläche tippen, um eine Stufenrolle (zwei Radien) zu platzieren.',
-  rod: 'Anfangs- und Endpunkt des Stabs antippen (beliebig schräg, Winkel in 15°-Schritten).',
+  rod: 'Stab vom Anfangs- zum Endpunkt ziehen (oder beide antippen), Winkel in 15°-Schritten. An Anschlusspunkten wird er gelenkig angeschlossen.',
   point: 'Auf die Zeichenfläche tippen, um eine Punktmasse zu platzieren.',
   ground: 'Auf die Zeichenfläche tippen, um einen Boden (Bahn) zu platzieren.',
   curve: 'Tippen setzt den tiefsten Punkt einer Kreismulde. Radius, Bogen und Mulde/Kuppe im Panel einstellen.',
   fix: 'Auf freie Fläche (Wand) oder auf ein freies Seil-/Federende tippen.',
   pin: 'Anschlusspunkt eines Körpers oder freies Seil-/Federende antippen → Festlager.',
   roller: 'Blauen Anschlusspunkt antippen → Loslager (Richtung danach im Panel einstellen).',
-  hinge: 'Anschlusspunkt am ersten Körper, dann am zweiten Körper antippen.',
+  hinge: 'Vom Anschlusspunkt des ersten Körpers zum zweiten Körper ziehen (oder beide antippen).',
   roll: 'Scheibe antippen → rollt ohne Gleiten auf dem nächsten Boden bzw. der nächsten Kreisbahn.',
   slide: 'Körper antippen → gleitet reibungsfrei auf dem nächsten Boden bzw. der nächsten Kreisbahn.',
-  rope: 'Ersten, dann zweiten Punkt antippen: Anschlusspunkt = verbunden, freies Ende eines anderen Elements = in Reihe, leere Fläche = freies Ende.',
-  spring: 'Ersten, dann zweiten Punkt antippen: Anschlusspunkt = verbunden, freies Ende eines anderen Elements = in Reihe, leere Fläche = freies Ende.',
-  damper: 'Ersten, dann zweiten Punkt antippen: Anschlusspunkt = verbunden, freies Ende eines anderen Elements = in Reihe, leere Fläche = freies Ende.',
-  springdamper: 'Ersten, dann zweiten Punkt antippen: Anschlusspunkt = verbunden, freies Ende eines anderen Elements = in Reihe, leere Fläche = freies Ende.',
+  rope: 'Vom ersten zum zweiten Punkt ziehen (oder beide antippen). Anschlusspunkt = verbunden, leere Fläche = freies Ende. Wird automatisch gerade bzw. tangential ausgerichtet.',
+  spring: 'Vom ersten zum zweiten Punkt ziehen (oder beide antippen). Anschlusspunkt = verbunden, leere Fläche = freies Ende. Wird automatisch gerade bzw. tangential ausgerichtet.',
+  damper: 'Vom ersten zum zweiten Punkt ziehen (oder beide antippen). Anschlusspunkt = verbunden, leere Fläche = freies Ende. Wird automatisch gerade bzw. tangential ausgerichtet.',
+  springdamper: 'Vom ersten zum zweiten Punkt ziehen (oder beide antippen). Anschlusspunkt = verbunden, leere Fläche = freies Ende. Wird automatisch gerade bzw. tangential ausgerichtet.',
   node: 'Freies Seil-/Federende antippen (oder leere Fläche): masseloser Verbindungspunkt für Reihenschaltungen.',
   tspring: 'Drehbaren Körper antippen, dann zweiten Körper oder leere Fläche (Umgebung).',
   tdamper: 'Drehbaren Körper antippen, dann zweiten Körper oder leere Fläche (Umgebung).',
@@ -172,7 +224,7 @@ function updateHint() {
   if (state.step === 'model') {
     h = HINTS[state.tool] || '';
     if (state.pending) {
-      if (state.pending.kind === 'line') h = 'Zweiten Punkt antippen (leere Fläche = freies Ende). Esc bricht ab.';
+      if (state.pending.kind === 'line') h = 'Zweiten Punkt antippen oder dorthin ziehen (leere Fläche = freies Ende). Esc bricht ab.';
       if (state.pending.kind === 'rod') h = 'Endpunkt des Stabs antippen.';
       if (state.pending.kind === 'hinge') h = 'Anschlusspunkt am zweiten Körper antippen.';
       if (state.pending.kind === 'torsion') h = 'Zweiten Körper antippen oder leere Fläche (Umgebung).';
@@ -218,9 +270,13 @@ function draw() {
     opts.preview = [el ? portWorld(el, a.port, opts.env) : [a.x, a.y], state.pointerW];
   }
   if (state.pending?.kind === 'rod' && state.pointerW) opts.preview = [state.pending.p, state.pointerW];
+  if (state.pending?.kind === 'hinge' && state.pointerW) { const A = byId(state.pending.a.el); if (A) opts.preview = [portWorld(A, state.pending.a.port, opts.env), state.pointerW]; }
+  if (state.pending?.kind === 'torsion' && state.pointerW) { const A = byId(state.pending.a); if (A) opts.preview = [[A.x, A.y], state.pointerW]; }
+  opts.guides = state.guides;
   opts.handles = step === 'model' && state.tool === 'select';
   if (step === 'sim' && state.simOut) opts.disp = currentDisp();
   svg.innerHTML = renderScene(state.sys, V, opts);
+  updateSelTools();
 }
 
 // ------------------------------------------------------------ Elemente erzeugen
@@ -277,8 +333,17 @@ function bodyAt(target, sx, sy) {
   const w = V.toWorld(sx, sy), e = env();
   let best = null, bd = Infinity;
   for (const el of bodies()) {
-    const d = Math.hypot(el.x - w[0], el.y - w[1]);
-    const r = el.type === 'disk' ? propNum(el, 'R', e, 0.1) : el.type === 'rod' ? propNum(el, 'l', e, 0.4) / 2 : 0.1;
+    let d, r;
+    if (el.type === 'rod') {
+      // Abstand zur Stabachse
+      const h = propNum(el, 'l', e, 0.4) / 2, a = ((el.angle || 0) * Math.PI) / 180;
+      const t = [Math.cos(a), Math.sin(a)], v = [w[0] - el.x, w[1] - el.y];
+      const s = Math.max(-h, Math.min(h, v[0] * t[0] + v[1] * t[1]));
+      d = Math.hypot(v[0] - s * t[0], v[1] - s * t[1]); r = 0;
+    } else {
+      d = Math.hypot(el.x - w[0], el.y - w[1]);
+      r = el.type === 'disk' ? propNum(el, 'R', e, 0.1) : el.type === 'block' ? Math.max(propNum(el, 'a', e, 0.2), propNum(el, 'b', e, 0.1)) / 2 : 0.02;
+    }
     if (d < r + 12 / V.s && d < bd) { bd = d; best = el; }
   }
   return best;
@@ -383,10 +448,170 @@ function supportFreeEnd(fe, style) {
   fe.line[fe.end] = { el: f.id, port: 'c' };
   return f;
 }
+
+// ------------------------------------------------------------ Ausrichten, Geradeziehen, Führung
+/** Weltpunkt eines Linienendes */
+function refPoint(ref) {
+  if (ref?.el) { const X = byId(ref.el); return X ? portWorld(X, ref.port, env()) : [0, 0]; }
+  return [ref.x, ref.y];
+}
+/** Anzahl der Elemente (außer `except`), die sich auf Element id beziehen */
+function refCount(id, except) {
+  return state.sys.elements.filter((e) => e !== except && e.id !== id && [e.at?.el, e.a?.el, e.b?.el, e.body, typeof e.a === 'string' ? e.a : null, typeof e.b === 'string' ? e.b : null].includes(id)).length;
+}
+/** Kann dieses Linienende verschoben werden, ohne andere Verbindungen zu stören? */
+function movableEnd(line, k) {
+  const ref = line[k];
+  if (!ref) return null;
+  if (!ref.el) return { kind: 'free', ref };
+  const X = byId(ref.el);
+  if (!X) return null;
+  if (X.type === 'fix' || X.type === 'node') return refCount(X.id, line) === 0 ? { kind: 'point', X } : null;
+  if (!isBody(X)) return null;
+  const g = hingeGroup(X.id);
+  if (groupAnchored(g)) return null;
+  const busy = state.sys.elements.some((e) => e !== line && (
+    (isLine(e) && (g.has(e.a?.el) || g.has(e.b?.el))) || (e.type === 'force' && g.has(e.at?.el))));
+  return busy ? null : { kind: 'body', g };
+}
+/** Radiale Richtung, falls das Ende auf dem Umfang einer Scheibe sitzt */
+function rimDir(ref) {
+  if (!ref?.el) return null;
+  const X = byId(ref.el);
+  if (X?.type !== 'disk') return null;
+  const p = findPort(X, ref.port, env());
+  if (!p?.rim) return null;
+  const r = Math.hypot(p.w[0], p.w[1]) || 1;
+  return [p.w[0] / r, p.w[1] / r];
+}
+/** Seil/Feder gerade ausrichten: tangential an Scheiben, sonst waagrecht/senkrecht/45°.
+ *  Verschoben wird nur ein frei bewegliches Ende (freies Ende, unverbundener Festpunkt, ungelagerter Körper). */
+function straighten(line) {
+  for (const k of ['b', 'a']) {
+    const mv = movableEnd(line, k);
+    if (!mv) continue;
+    const o = k === 'a' ? 'b' : 'a';
+    const F = refPoint(line[o]), Q = refPoint(line[k]);
+    const v = [Q[0] - F[0], Q[1] - F[1]];
+    const L = Math.hypot(v[0], v[1]);
+    if (L < 1e-6) return false;
+    const rd = rimDir(line[o]) || rimDir(line[k]);
+    const S = Math.SQRT1_2;
+    const cands = rd ? [[-rd[1], rd[0], 25], [rd[0], rd[1], 20]] : [[1, 0, 15], [0, 1, 15], [S, S, 8], [S, -S, 8]];
+    let best = null, bc = -1;
+    for (const u of cands) { const c = Math.abs(v[0] * u[0] + v[1] * u[1]) / L; if (c > bc) { bc = c; best = u; } }
+    if (bc < Math.cos((best[2] * Math.PI) / 180)) return false;
+    const pr = v[0] * best[0] + v[1] * best[1];
+    const d = [F[0] + pr * best[0] - Q[0], F[1] + pr * best[1] - Q[1]];
+    if (Math.hypot(d[0], d[1]) < 1e-9) return true;
+    if (mv.kind === 'free') { mv.ref.x = round6(mv.ref.x + d[0]); mv.ref.y = round6(mv.ref.y + d[1]); }
+    else if (mv.kind === 'point') { mv.X.x = round6(mv.X.x + d[0]); mv.X.y = round6(mv.X.y + d[1]); }
+    else moveGroup(mv.g, d[0], d[1]);
+    return true;
+  }
+  return false;
+}
+
+/** Punkte eines Elements, die beim Verschieben ausgerichtet werden */
+function snapPoints(el) {
+  const e = env();
+  if (isBody(el) || el.type === 'fix' || el.type === 'node') {
+    return ports(el, e).filter((p) => !(el.type === 'rod' && (p.id === 'q1' || p.id === 'q2'))).map((p) => [el.x + p.w[0], el.y + p.w[1]]);
+  }
+  return [];
+}
+function targetPoints(skip) {
+  const pts = [];
+  for (const el of state.sys.elements) {
+    if (skip.has(el.id)) continue;
+    pts.push(...snapPoints(el));
+    if (el.type === 'curve') {
+      const rho = propNum(el, 'rho', env(), 0.5);
+      pts.push([el.x, el.y]);
+      for (const a of [el.a0 ?? 200, el.a1 ?? 340]) pts.push([round6(el.x + rho * Math.cos((a * Math.PI) / 180)), round6(el.y + rho * Math.sin((a * Math.PI) / 180))]);
+    }
+    if (isLine(el)) for (const k of ['a', 'b']) if (el[k] && !el[k].el && Number.isFinite(el[k].x)) pts.push([el[k].x, el[k].y]);
+  }
+  return pts;
+}
+/** Ausrichtung an Anschlusspunkten anderer Elemente (waagrecht/senkrecht), Toleranz in Pixeln */
+function alignOffset(own, skip, tolPx = 9) {
+  const tol = tolPx / V.s;
+  const others = targetPoints(skip);
+  let bx = null, by = null;
+  for (const p of own) for (const q of others) {
+    const dx = q[0] - p[0], dy = q[1] - p[1];
+    if (Math.abs(dx) < tol && (!bx || Math.abs(dx) < Math.abs(bx.d))) bx = { d: dx, p, q };
+    if (Math.abs(dy) < tol && (!by || Math.abs(dy) < Math.abs(by.d))) by = { d: dy, p, q };
+  }
+  const dx = bx ? bx.d : 0, dy = by ? by.d : 0;
+  const guides = [];
+  if (bx) guides.push([[bx.q[0], bx.p[1] + dy], bx.q]);
+  if (by) guides.push([[by.p[0] + dx, by.q[1]], by.q]);
+  return { dx, dy, guides };
+}
+function alignElement(el, skip = new Set([el.id]), tolPx = 9) {
+  const a = alignOffset(snapPoints(el), skip, tolPx);
+  el.x = round6(el.x + a.dx); el.y = round6(el.y + a.dy);
+  return a;
+}
+
+/** Führung (senkrecht/waagrecht) eines Körpers – intern ein Loslager im Schwerpunkt */
+const guideOf = (b) => state.sys.elements.find((x) => x.guide && x.at?.el === b.id);
+function guideMode(b) {
+  const g = guideOf(b);
+  if (!g) return 'none';
+  return Math.abs(Math.sin(((g.angle ?? -90) * Math.PI) / 180)) < 0.5 ? 'v' : 'h';
+}
+function setGuide(b, mode, auto = false) {
+  state.sys.elements = state.sys.elements.filter((x) => !(x.guide && x.at?.el === b.id));
+  if (mode === 'v' || mode === 'h') state.sys.elements.push({ id: newId('s'), type: 'roller', guide: true, auto, at: { el: b.id, port: 'c' }, angle: mode === 'v' ? 180 : -90 });
+}
+const bodyName = (b) => (TYPES[b.type].name.split(' ')[0]) + ' ' + (b.label || '');
+/** Hängt ein Körper nur an einer senkrechten Verbindung, wird er (wie in Skizzen üblich) senkrecht geführt */
+function autoGuide(line) {
+  const P = refPoint(line.a), Q = refPoint(line.b);
+  const vertical = Math.abs(P[0] - Q[0]) < 1e-6, horizontal = Math.abs(P[1] - Q[1]) < 1e-6;
+  for (const k of ['a', 'b']) {
+    const X = line[k]?.el ? byId(line[k].el) : null;
+    if (!X || !['block', 'point', 'disk'].includes(X.type)) continue;
+    const g = guideOf(X);
+    if (g?.auto && !vertical && guideMode(X) === 'v' && horizontal) {
+      setGuide(X, 'none'); toast(bodyName(X) + ': senkrechte Führung entfernt (waagrechte Verbindung).'); continue;
+    }
+    if (!vertical || g) continue;
+    const constrained = state.sys.elements.some((e) => e.type === 'contact' && e.body === X.id
+      || ((e.type === 'pin' || e.type === 'roller') && e.at?.el === X.id) || (e.type === 'hinge' && (e.a?.el === X.id || e.b?.el === X.id)));
+    if (constrained) continue;
+    // nur, wenn alle Verbindungen des Körpers senkrecht sind
+    const allVertical = state.sys.elements.filter((e) => isLine(e) && (e.a?.el === X.id || e.b?.el === X.id))
+      .every((e) => { const A = refPoint(e.a), B = refPoint(e.b); return Math.abs(A[0] - B[0]) < 1e-6; });
+    if (!allVertical) continue;
+    setGuide(X, 'v', true);
+    toast(bodyName(X) + ' wird senkrecht geführt (wie in der Skizze) – änderbar unter „Führung“.', 3800);
+  }
+}
+/** gezeichnete Länge als Ausdruck vorschlagen: Vielfaches von l₀ (√2·r, 2·r …) oder Zahlenwert */
+function drawnLengthExpr(el, L) {
+  let L0n;
+  try { L0n = propNum(el, 'L0', env(), NaN); } catch { L0n = NaN; }
+  if (!Number.isFinite(L0n) || L0n <= 0) return String(round3(L));
+  const q = L / L0n;
+  if (Math.abs(q - 1) < 0.005) return '';
+  const src = String(el.props.L0).trim();
+  const base = /^[A-Za-z0-9_.]+$/.test(src) ? src : '(' + src + ')';
+  const C = [['sqrt(2)', Math.SQRT2], ['sqrt(3)', Math.sqrt(3)], ['sqrt(5)', Math.sqrt(5)], ['2', 2], ['3', 3], ['4', 4], ['1/2', 0.5], ['3/2', 1.5],
+    ['sqrt(2)/2', Math.SQRT1_2], ['sqrt(3)/2', Math.sqrt(3) / 2], ['2*sqrt(2)', 2 * Math.SQRT2], ['1/3', 1 / 3], ['2/3', 2 / 3]];
+  for (const [t, v] of C) if (Math.abs(q - v) < 0.002 * v) return t + '*' + base;
+  return String(round3(L));
+}
 function updateAutoL0() {
-  for (const el of state.sys.elements) if (isLine(el) && el.L0auto) {
+  for (const el of state.sys.elements) {
+    if (!isLine(el)) continue;
     const L = lineLength(el);
-    if (L > 1e-6) el.props.L0 = String(round3(L));
+    if (L <= 1e-6) continue;
+    if (el.L0auto) el.props.L0 = String(round3(L));
+    else if (el.L0auto === false && el.type !== 'rope' && el.LzAuto !== false) { el.props.Lz = drawnLengthExpr(el, L); el.LzAuto = true; }
   }
 }
 function groundDistance(body, g) {
@@ -441,6 +666,7 @@ function contactTool(body, mode) {
   if (g.type === 'curve' && body.type === 'block') { toast('Auf einer Kreisbahn laufen nur Scheiben und Punktmassen.'); return; }
   if (g.type !== 'curve' && body.type === 'point') { toast('Punktmassen können nur auf einer Kreisbahn geführt werden (auf geradem Boden: Loslager verwenden).'); return; }
   placeOnGround(body, g);
+  setGuide(body, 'none');
   const c = { id: newId('c'), type: 'contact', body: body.id, ground: g.id, mode };
   state.sys.elements.push(c);
   state.sel = c.id;
@@ -493,14 +719,17 @@ function tap(sx, sy, target) {
     case 'select': state.sel = elG ? elG.dataset.id : null; break;
     case 'delete': if (elG) deleteElement(elG.dataset.id); return;
     case 'rod': {
-      if (!state.pending) { state.pending = { kind: 'rod', p: ws }; state.pointerW = w; updateHint(); draw(); return; }
-      const p0 = state.pending.p;
+      // Stabenden rasten an Anschlusspunkten anderer Körper ein und werden dort gelenkig angeschlossen
+      const pp = portAt(sx, sy, 18, isBody);
+      const pw = pp ? portWorld(byId(pp.el), pp.port, env()) : ws;
+      if (!state.pending) { state.pending = { kind: 'rod', p: pw, port: pp }; state.pointerW = w; updateHint(); draw(); return; }
+      const p0 = state.pending.p, port0 = state.pending.port;
       state.pending = null;
-      let L = Math.hypot(ws[0] - p0[0], ws[1] - p0[1]);
+      let L = Math.hypot(pw[0] - p0[0], pw[1] - p0[1]);
       let ang = 90;
       if (L < 0.04) L = 0.4;
-      else ang = Math.round((Math.atan2(ws[1] - p0[1], ws[0] - p0[0]) * 180) / Math.PI / 15) * 15;
-      L = Math.max(0.05, Math.round(L / 0.05) * 0.05);
+      else ang = Math.round((Math.atan2(pw[1] - p0[1], pw[0] - p0[0]) * 180) / Math.PI / 15) * 15;
+      L = pp ? Math.max(0.05, round3(L)) : Math.max(0.05, Math.round(L / 0.05) * 0.05);
       const el = createBody('rod', p0);
       const a = (ang * Math.PI) / 180;
       el.angle = ang;
@@ -508,6 +737,14 @@ function tap(sx, sy, target) {
       el.y = round6(p0[1] + (L / 2) * Math.sin(a));
       const ln = 'l_' + el.label;
       if (state.sys.params[ln] === undefined || state.sys.params[ln] === 0.4) state.sys.params[ln] = round3(L);
+      const e1 = env();
+      let joined = 0;
+      for (const [ref, endId] of [[port0, 'e1'], [pp, 'e2']]) {
+        if (!ref || ref.el === el.id) continue;
+        const a = portWorld(el, endId, e1), b = portWorld(byId(ref.el), ref.port, e1);
+        if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.004) { state.sys.elements.push({ id: newId('h'), type: 'hinge', a: { el: el.id, port: endId }, b: ref }); joined++; }
+      }
+      if (joined) toast('Stab ' + el.label + ' gelenkig angeschlossen' + (joined > 1 ? ' (beide Enden).' : '.'));
       state.sel = el.id; setTool('select');
       break;
     }
@@ -520,6 +757,7 @@ function tap(sx, sy, target) {
     }
     case 'block': case 'disk': case 'stepdisk': case 'point': {
       const el = createBody(t, ws);
+      alignElement(el, new Set([el.id]), 12);
       state.sel = el.id; setTool('select');
       break;
     }
@@ -558,6 +796,8 @@ function tap(sx, sy, target) {
       const B = byId(p.el), pw = portWorld(B, p.port, env());
       const dx = pw[0] - B.x, dy = pw[1] - B.y;
       const ang = Math.hypot(dx, dy) > 1e-6 ? Math.round((Math.atan2(dy, dx) * 180) / Math.PI / 45) * 45 : -90;
+      const gd = guideOf(B);
+      if (gd?.auto) setGuide(B, 'none');
       const el = { id: newId('s'), type: t, at: p, angle: ang };
       state.sys.elements.push(el); state.sel = el.id;
       break;
@@ -599,7 +839,8 @@ function tap(sx, sy, target) {
         const fe = freeEndAt(sx, sy);
         if (fe) { const n = nodeAtFreeEnd(fe); p = { el: n.id, port: 'c' }; }
       }
-      const endRef = p || { x: ws[0], y: ws[1] };
+      let endRef = p;
+      if (!endRef) { const al = alignOffset([ws], new Set()); endRef = { x: round6(ws[0] + al.dx), y: round6(ws[1] + al.dy) }; }
       if (!state.pending) {
         state.pending = { kind: 'line', a: endRef };
         state.pointerW = w;
@@ -607,7 +848,11 @@ function tap(sx, sy, target) {
       }
       const el = finishLine(state.pending.a, endRef);
       state.pending = null;
-      if (el) state.sel = el.id;
+      if (el) {
+        if (straighten(el)) { updateAutoL0(); if (el.L0auto) el.props.L0 = String(round3(lineLength(el))); }
+        autoGuide(el);
+        state.sel = el.id;
+      }
       break;
     }
     case 'tspring': case 'tdamper': {
@@ -666,7 +911,15 @@ svg.addEventListener('pointerdown', (e) => {
   const el = elG ? byId(elG.dataset.id) : null;
   const draggable = state.step === 'model' && state.tool === 'select' && el && (isBody(el) || el.type === 'ground' || el.type === 'fix' || el.type === 'node' || el.type === 'curve');
   const grp = draggable && isBody(el) ? [...hingeGroup(el.id)].map((id) => byId(id)).map((b) => ({ b, x: b.x, y: b.y })) : null;
-  gesture = { kind: 'down', sx, sy, target: e.target, el: draggable ? el : null, ox: el?.x, oy: el?.y, grp, view0: { ...state.view }, moved: false };
+  // Ziehen ab einem Anschlusspunkt verbindet, Ziehen auf leerer Fläche verschiebt weiterhin die Ansicht
+  let connect = false;
+  if (state.step === 'model' && CONNECT_TOOLS.has(state.tool) && !state.pending) {
+    if (state.tool === 'tspring' || state.tool === 'tdamper') { const bb = bodyAt(e.target, sx, sy); connect = !!(bb && hasRotation(bb)); }
+    else if (state.tool === 'hinge') connect = !!portAt(sx, sy, 20, isBody);
+    else if (state.tool === 'rod') connect = true;
+    else connect = !!(portAt(sx, sy, 18) || freeEndAt(sx, sy));
+  }
+  gesture = { kind: 'down', sx, sy, target: e.target, el: draggable ? el : null, ox: el?.x, oy: el?.y, grp, view0: { ...state.view }, moved: false, connect };
 });
 svg.addEventListener('pointermove', (e) => {
   const r = svg.getBoundingClientRect();
@@ -687,7 +940,14 @@ svg.addEventListener('pointermove', (e) => {
     if (Math.hypot(sx - gesture.sx, sy - gesture.sy) > 3) gesture.moved = true;
     const hp = portAt(sx, sy, 18, (x) => !gesture.line[gesture.end === 'a' ? 'b' : 'a']?.el || x.id !== gesture.line[gesture.end === 'a' ? 'b' : 'a'].el);
     const w = V.toWorld(sx, sy);
-    gesture.line[gesture.end] = hp || { x: round3(snapV(w[0], 0.025)), y: round3(snapV(w[1], 0.025)) };
+    let fp = null;
+    if (!hp) {
+      fp = [round3(snapV(w[0], 0.025)), round3(snapV(w[1], 0.025))];
+      const al = alignOffset([fp], new Set());
+      fp = [round6(fp[0] + al.dx), round6(fp[1] + al.dy)];
+      state.guides = al.guides.length ? al.guides : null;
+    } else state.guides = null;
+    gesture.line[gesture.end] = hp || { x: fp[0], y: fp[1] };
     state.hotPort = hp ? hp.el + '|' + hp.port : null;
     updateAutoL0();
     draw();
@@ -695,11 +955,33 @@ svg.addEventListener('pointermove', (e) => {
   }
   if (gesture?.kind === 'down') {
     const dx = sx - gesture.sx, dy = sy - gesture.sy;
-    if (!gesture.moved && Math.hypot(dx, dy) > 5) gesture.moved = true;
+    if (!gesture.moved && Math.hypot(dx, dy) > 6) gesture.moved = true;
+    if (gesture.moved && gesture.connect) {
+      // Verbinden in einem Zug: Startpunkt beim Drücken, Endpunkt beim Loslassen
+      if (!gesture.started) {
+        gesture.started = true;
+        if (!state.pending) tap(gesture.sx, gesture.sy, gesture.target);
+        if (!state.pending) { gesture.connect = false; gesture.dead = true; return; }
+      }
+      state.pointerW = V.toWorld(sx, sy);
+      const hp = state.pending?.kind === 'torsion' ? null : portAt(sx, sy, 18);
+      state.hotPort = hp ? hp.el + '|' + hp.port : null;
+      draw();
+      return;
+    }
+    if (gesture.dead) return;
     if (gesture.moved) {
       if (gesture.el) {
-        const nx = round3(snapV(gesture.ox + dx / state.view.s, 0.025));
-        const ny = round3(snapV(gesture.oy - dy / state.view.s, 0.025));
+        let nx = round3(snapV(gesture.ox + dx / state.view.s, 0.025));
+        let ny = round3(snapV(gesture.oy - dy / state.view.s, 0.025));
+        // an Anschlusspunkten anderer Elemente ausrichten (Hilfslinien)
+        const skip = new Set(gesture.grp ? gesture.grp.map((g) => g.b.id) : [gesture.el.id]);
+        const px = gesture.el.x, py = gesture.el.y;
+        gesture.el.x = nx; gesture.el.y = ny;
+        const al = alignOffset(snapPoints(gesture.el), skip);
+        gesture.el.x = px; gesture.el.y = py;
+        nx = round6(nx + al.dx); ny = round6(ny + al.dy);
+        state.guides = al.guides.length ? al.guides : null;
         if (gesture.grp) for (const g of gesture.grp) { g.b.x = round6(g.x + nx - gesture.ox); g.b.y = round6(g.y + ny - gesture.oy); }
         else { gesture.el.x = nx; gesture.el.y = ny; }
         updateAutoL0();
@@ -722,18 +1004,29 @@ svg.addEventListener('pointermove', (e) => {
 });
 function endPointer(e) {
   pointers.delete(e.pointerId);
+  state.guides = null;
   if (gesture?.kind === 'pinch') { if (pointers.size === 0) { gesture = null; save(); } return; }
   if (gesture?.kind === 'handle') { gesture = null; state.hotPort = null; changed(); renderPanel(); return; }
   if (gesture?.kind === 'down') {
     const g = gesture;
     gesture = null;
+    if (g.dead) { draw(); return; }
+    if (g.moved && g.connect) {
+      const r = svg.getBoundingClientRect();
+      const ex = e.clientX - r.left, ey = e.clientY - r.top;
+      const tgt = document.elementFromPoint(e.clientX, e.clientY);
+      state.hotPort = null;
+      if (state.pending) tap(ex, ey, svg.contains(tgt) ? tgt : null);
+      else draw();
+      return;
+    }
     if (!g.moved) tap(g.sx, g.sy, g.target);
     else if (g.el) { changed(); renderPanel(); }
     else save();
   }
 }
 svg.addEventListener('pointerup', endPointer);
-svg.addEventListener('pointercancel', (e) => { pointers.delete(e.pointerId); gesture = null; });
+svg.addEventListener('pointercancel', (e) => { pointers.delete(e.pointerId); gesture = null; state.guides = null; draw(); });
 svg.addEventListener('wheel', (e) => {
   e.preventDefault();
   const r = svg.getBoundingClientRect();
@@ -779,6 +1072,10 @@ document.querySelector('.zoom-ctl').addEventListener('click', (e) => {
 });
 window.addEventListener('keydown', (e) => {
   if (e.target.closest('input, select, textarea')) return;
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && state.step === 'model' && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+  if (mod && state.step === 'model' && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); redo(); return; }
+  if (mod && state.step === 'model' && (e.key === 'd' || e.key === 'D') && state.sel) { e.preventDefault(); duplicateSelected(); return; }
   if ((e.key === 'Delete' || e.key === 'Backspace') && state.sel && state.step === 'model') { e.preventDefault(); deleteElement(state.sel); }
   if (e.key === 'Escape') {
     if (state.pending) {
@@ -870,7 +1167,7 @@ function panelModel() {
   let h = '';
   if (el) {
     const t = TYPES[el.type];
-    h += `<h2>${esc(t.name)}${el.label ? ' ' + esc(el.label) : ''}</h2><div class="card" id="el-props">`;
+    h += `<h2>${el.guide ? 'Führung' : esc(t.name)}${el.label ? ' ' + esc(el.label) : ''}</h2><div class="card" id="el-props">`;
     if (isBody(el)) h += field('Bezeichnung', 'label', el.label);
     switch (el.type) {
       case 'block':
@@ -894,11 +1191,19 @@ function panelModel() {
       case 'curve':
         h += exprField('Radius ρ', 'rho', el);
         h += field('Bogen von' + unitTag('°'), 'a0', el.a0 ?? 200, { type: 'number', attrs: 'step="5"' }) + field('Bogen bis' + unitTag('°'), 'a1', el.a1 ?? 340, { type: 'number', attrs: 'step="5"' });
-        h += `<div class="field"><label>Art</label><div class="seg"><button data-concave="1" class="${el.concave !== false ? 'on' : ''}">Mulde (innen)</button><button data-concave="0" class="${el.concave === false ? 'on' : ''}">Kuppe (außen)</button></div></div>`;
+        h += `<div class="field"><label>Art</label><div class="seg"><button data-concave="1" class="${el.concave !== false ? 'on' : ''}">◡ Mulde</button><button data-concave="0" class="${el.concave === false ? 'on' : ''}">◠ Kuppe</button></div></div>`;
+        h += `<div class="field"><label>Bogen</label><div class="row"><button class="btn small" data-arc="half">Halbkreis</button><button class="btn small" data-arc="flat">flach</button></div></div>`;
         h += '<p class="muted">Kreisförmige Bahn um den Mittelpunkt. Scheiben (Rollen/Gleiten) und Punktmassen (Gleiten) laufen innen (Mulde) oder außen (Kuppe). Werkzeug „Rollen“ bzw. „Gleiten“ auf den Körper anwenden.</p>';
         break;
       case 'pin': h += angleField('Richtung' + unitTag('°'), el) + '<p class="muted">Festlager: Punkt unverschieblich, Drehung frei.</p>'; break;
-      case 'roller': h += angleField('Richtung' + unitTag('°'), el) + '<p class="muted">Loslager/Gleitlager: Verschiebung in Richtung des Lagers gesperrt, quer dazu frei.</p>'; break;
+      case 'roller':
+        if (el.guide) {
+          const B = byId(el.at?.el);
+          h += `<div class="field"><label>Richtung</label><div class="seg"><button data-gdir="v" class="${Math.abs(Math.sin(((el.angle ?? -90) * Math.PI) / 180)) < 0.5 ? 'on' : ''}">↕ senkrecht</button><button data-gdir="h" class="${Math.abs(Math.sin(((el.angle ?? -90) * Math.PI) / 180)) >= 0.5 ? 'on' : ''}">↔ waagrecht</button></div></div>`;
+          h += `<p class="muted">Führung von ${esc(B ? bodyName(B) : '?')}: Der Körper kann sich nur in der gewählten Richtung verschieben.</p>`;
+          break;
+        }
+        h += angleField('Richtung' + unitTag('°'), el) + '<p class="muted">Loslager/Gleitlager: Verschiebung in Richtung des Lagers gesperrt, quer dazu frei.</p>'; break;
       case 'node': {
         const n = state.sys.elements.filter((x) => isLine(x) && (x.a?.el === el.id || x.b?.el === el.id)).length;
         h += `<p class="muted">Masseloser Verbindungspunkt mit ${n} angeschlossenen Element${n === 1 ? '' : 'en'}. Zwei Elemente in Reihe werden zu einem Ersatzelement zusammengefasst (z. B. 1/k = 1/k₁ + 1/k₂). Der Knoten muss auf der Verbindungslinie der äußeren Enden liegen.</p>`;
@@ -915,6 +1220,7 @@ function panelModel() {
         if (el.props.k !== undefined) h += exprField('Steifigkeit k', 'k', el);
         if (el.props.d !== undefined) h += exprField('Dämpfung d', 'd', el);
         h += exprField(el.type === 'rope' ? 'Seillänge l₀' : 'Länge l₀ (entspannt)', 'L0', el);
+        if (el.type !== 'rope' && !el.L0auto) h += exprField('Länge in der Zeichnung', 'Lz', el);
         {
           const endTxt = (r) => (r?.el ? (byId(r.el)?.type === 'fix' ? 'Lager/Festpunkt' : TYPES[byId(r.el)?.type]?.name + ' ' + (byId(r.el)?.label || '')) : '<b style="color:var(--warn)">frei</b>');
           h += `<div class="field"><label>Enden</label><span style="font-size:14px">${endTxt(el.a)} – ${endTxt(el.b)}</span></div>`;
@@ -922,7 +1228,8 @@ function panelModel() {
           else h += '<p class="muted">Enden (□) lassen sich auf andere Anschlusspunkte ziehen oder lösen.</p>';
         }
         h += `<div class="field"><label></label><label class="row"><input type="checkbox" data-l0auto ${el.L0auto ? 'checked' : ''}> l₀ aus Zeichnung übernehmen</label></div>`;
-        h += '<p class="muted">l₀ geht nur in die nichtlineare Rechnung ein. Liegt ein Ende tangential an einer Scheibe, wird es als aufgewickelt behandelt.</p>';
+        if (el.type !== 'rope' && !el.L0auto && el.props.Lz) h += '<p class="muted">Gezeichnete Länge ≠ l₀: Die Feder ist in der gezeichneten Lage vorgespannt (z. B. „im entspannten Zustand Länge r“). Die gezeichnete Länge wird aus der Zeichnung vorgeschlagen.</p>';
+        h += '<p class="muted">Liegt ein Ende tangential an einer Scheibe, wird es als aufgewickelt behandelt.</p>';
         break;
       case 'tspring': h += exprField('Drehsteifigkeit', 'kt', el); break;
       case 'tdamper': h += exprField('Drehdämpfung', 'dt', el); break;
@@ -931,6 +1238,11 @@ function panelModel() {
         h += exprField('Moment M(t)', 'M', el);
         h += `<div class="field"><label>Drehsinn</label><div class="seg"><button data-mdir="1" class="${el.dir !== -1 ? 'on' : ''}">↺ gegen Uhrzeiger</button><button data-mdir="-1" class="${el.dir === -1 ? 'on' : ''}">↻ im Uhrzeiger</button></div></div>`;
         break;
+    }
+    if (['block', 'disk', 'point'].includes(el.type) && !state.sys.elements.some((x) => x.type === 'contact' && x.body === el.id)) {
+      const gm = guideMode(el);
+      h += `<div class="field"><label>Führung</label><div class="seg"><button data-guide="none" class="${gm === 'none' ? 'on' : ''}">frei</button><button data-guide="v" class="${gm === 'v' ? 'on' : ''}" title="nur senkrecht beweglich">↕ senkr.</button><button data-guide="h" class="${gm === 'h' ? 'on' : ''}" title="nur waagrecht beweglich">↔ waagr.</button></div></div>`;
+      h += '<p class="muted">Geführte Körper bewegen sich nur in eine Richtung – z. B. eine hängende Masse, die sich nur auf und ab bewegt.</p>';
     }
     h += `<div class="row" style="margin-top:10px"><button class="btn danger small" data-del>Löschen</button></div></div>`;
   } else {
@@ -952,7 +1264,7 @@ function paramTable() {
 function bindParamInputs(root) {
   root.querySelectorAll('[data-param]').forEach((inp) => inp.addEventListener('input', () => {
     const v = parseFloat(inp.value);
-    if (Number.isFinite(v)) { state.sys.params[inp.dataset.param] = v; inp.classList.remove('bad'); updateAutoL0(); changed(); }
+    if (Number.isFinite(v)) { state.sys.params[inp.dataset.param] = v; inp.classList.remove('bad'); updateAutoL0(); changed({ typing: true }); }
     else inp.classList.add('bad');
   }));
 }
@@ -965,10 +1277,11 @@ function bindModelPanel(el) {
     inp.addEventListener('input', () => {
       const k = inp.dataset.prop;
       el.props[k] = inp.value;
-      if (k === 'L0') el.L0auto = false;
+      if (k === 'L0') { el.L0auto = false; updateAutoL0(); const lz = panel.querySelector('[data-prop="Lz"]'); if (lz && document.activeElement !== lz) lz.value = el.props.Lz || ''; }
+      if (k === 'Lz') el.LzAuto = false;
       const bad = inp.value !== '' && tryParse(inp.value).error;
       inp.classList.toggle('bad', !!bad);
-      if (!bad) { changed(); updateAutoL0(); }
+      if (!bad) { changed({ typing: true }); updateAutoL0(); }
     });
     inp.addEventListener('change', () => { const box = panel.querySelector('.ptable')?.closest('.card'); if (box) { panelModel(); } });
   });
@@ -976,36 +1289,121 @@ function bindModelPanel(el) {
     const k = inp.dataset.k;
     if (k === 'label') {
       const v = inp.value.trim();
-      if (v && !bodies().some((b) => b !== el && b.label === v)) { el.label = v; changed(); }
+      if (v && !bodies().some((b) => b !== el && b.label === v)) { el.label = v; changed({ typing: true }); }
       return;
     }
     const v = parseFloat(inp.value);
-    if (Number.isFinite(v)) { if (k === 'angle') setAngle(v); else el[k] = v; updateAutoL0(); changed(); }
+    if (Number.isFinite(v)) { if (k === 'angle') setAngle(v); else el[k] = v; updateAutoL0(); changed({ typing: true }); }
   }));
-  /** Winkel ändern; Körper dreht sich um seinen Gelenk-/Lagerpunkt, damit die Verbindung erhalten bleibt */
-  const setAngle = (ang) => {
-    const pv = isBody(el) ? pivotPort(el) : null;
-    const before = pv ? portWorld(el, pv, env()) : null;
-    el.angle = ang;
-    if (pv) {
-      const after = portWorld(el, pv, env());
-      el.x = round6(el.x + before[0] - after[0]); el.y = round6(el.y + before[1] - after[1]);
+  const setAngle = (ang) => setElAngle(el, ang);
+  panel.querySelectorAll('[data-rot]').forEach((b) => b.addEventListener('click', () => rotateBy(el, Number(b.dataset.rot))));
+  panel.querySelector('[data-bool]')?.addEventListener('change', (e) => { el.props[e.target.dataset.bool] = e.target.checked; changed(); panelModel(); });
+  panel.querySelector('[data-l0auto]')?.addEventListener('change', (e) => { el.L0auto = e.target.checked; if (el.L0auto) { delete el.props.Lz; delete el.LzAuto; } updateAutoL0(); changed(); panelModel(); });
+  panel.querySelectorAll('[data-fstyle]').forEach((b) => b.addEventListener('click', () => { if (b.dataset.fstyle === 'pin') { el.style = 'pin'; el.angle = -90; } else { delete el.style; } changed(); panelModel(); }));
+  panel.querySelectorAll('[data-concave]').forEach((b) => b.addEventListener('click', () => {
+    const cc = b.dataset.concave === '1';
+    if (cc !== (el.concave !== false)) {
+      // Bogen an der Waagrechten spiegeln; tiefster bzw. höchster Punkt bleibt an seiner Stelle
+      const rho = propNum(el, 'rho', env(), 0.5);
+      const a0 = el.a0 ?? 200, a1 = el.a1 ?? 340;
+      el.a0 = 360 - a1; el.a1 = 360 - a0;
+      if (el.a0 >= 360) { el.a0 -= 360; el.a1 -= 360; }
+      el.y = round6(el.y + (cc ? 2 : -2) * rho);
+      el.concave = cc;
+      for (const c of state.sys.elements.filter((x) => x.type === 'contact' && x.ground === el.id)) placeOnGround(byId(c.body), el);
     }
-  };
-  panel.querySelectorAll('[data-rot]').forEach((b) => b.addEventListener('click', () => {
-    let a = (((el.angle || 0) + Number(b.dataset.rot)) % 360 + 360) % 360;
-    if (a > 180) a -= 360;
-    setAngle(a);
     updateAutoL0(); changed(); panelModel();
   }));
-  panel.querySelector('[data-bool]')?.addEventListener('change', (e) => { el.props[e.target.dataset.bool] = e.target.checked; changed(); panelModel(); });
-  panel.querySelector('[data-l0auto]')?.addEventListener('change', (e) => { el.L0auto = e.target.checked; updateAutoL0(); changed(); panelModel(); });
-  panel.querySelectorAll('[data-fstyle]').forEach((b) => b.addEventListener('click', () => { if (b.dataset.fstyle === 'pin') { el.style = 'pin'; el.angle = -90; } else { delete el.style; } changed(); panelModel(); }));
-  panel.querySelectorAll('[data-concave]').forEach((b) => b.addEventListener('click', () => { el.concave = b.dataset.concave === '1'; changed(); panelModel(); }));
+  panel.querySelectorAll('[data-arc]').forEach((b) => b.addEventListener('click', () => {
+    const up = el.concave === false;
+    if (b.dataset.arc === 'half') { el.a0 = up ? 0 : 180; el.a1 = up ? 180 : 360; } else { el.a0 = up ? 20 : 200; el.a1 = up ? 160 : 340; }
+    changed(); panelModel();
+  }));
   panel.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => { el.mode = b.dataset.mode; changed(); panelModel(); }));
   panel.querySelectorAll('[data-mdir]').forEach((b) => b.addEventListener('click', () => { el.dir = Number(b.dataset.mdir); changed(); panelModel(); }));
   panel.querySelector('[data-del]')?.addEventListener('click', () => deleteElement(el.id));
+  panel.querySelectorAll('[data-guide]').forEach((b) => b.addEventListener('click', () => { setGuide(el, b.dataset.guide); changed(); panelModel(); }));
+  panel.querySelectorAll('[data-gdir]').forEach((b) => b.addEventListener('click', () => { el.angle = b.dataset.gdir === 'v' ? 180 : -90; el.auto = false; changed(); panelModel(); }));
 }
+
+/** Winkel ändern; Körper dreht sich um seinen Gelenk-/Lagerpunkt, damit die Verbindung erhalten bleibt */
+function setElAngle(el, ang) {
+  const pv = isBody(el) ? pivotPort(el) : null;
+  const before = pv ? portWorld(el, pv, env()) : null;
+  el.angle = ang;
+  if (pv) {
+    const after = portWorld(el, pv, env());
+    el.x = round6(el.x + before[0] - after[0]); el.y = round6(el.y + before[1] - after[1]);
+  }
+}
+const ROTATABLE = new Set(['block', 'rod', 'ground', 'fix', 'pin', 'roller', 'force']);
+function rotateBy(el, delta) {
+  let a = (((el.angle ?? (el.type === 'pin' || el.type === 'roller' ? -90 : 0)) + delta) % 360 + 360) % 360;
+  if (a > 180) a -= 360;
+  setElAngle(el, a);
+  updateAutoL0(); changed(); renderPanel();
+}
+
+// ---- Auswahl-Werkzeugleiste (schwebend an der Zeichnung)
+const DUPLICABLE = new Set(['block', 'disk', 'rod', 'point', 'ground', 'curve', 'fix']);
+function duplicateSelected() {
+  const el = state.sel ? byId(state.sel) : null;
+  if (!el || !DUPLICABLE.has(el.type)) return;
+  const c = structuredClone(el);
+  c.id = newId(el.id[0]);
+  const e = env();
+  const w = el.type === 'disk' ? 2 * propNum(el, 'R', e, 0.1) : el.type === 'block' ? propNum(el, 'a', e, 0.2) : el.type === 'rod' ? 0.15 : el.type === 'ground' ? 0 : 0.15;
+  c.x = round6(el.x + w + 0.1);
+  if (el.type === 'ground') c.y = round6(el.y - 0.3);
+  if (isBody(el)) c.label = nextLabel();
+  state.sys.elements.push(c);
+  // Führung mitkopieren
+  for (const g of state.sys.elements.filter((x) => x.guide && x.at?.el === el.id)) state.sys.elements.push({ ...structuredClone(g), id: newId('s'), at: { ...g.at, el: c.id } });
+  state.sel = c.id;
+  changed(); renderPanel(); updateHint();
+  if (isBody(el)) toast('Kopie mit denselben Parametern (' + Object.values(el.props).filter((v) => typeof v === 'string' && v).join(', ') + ') – im Panel änderbar.');
+}
+function updateSelTools() {
+  const box = $('#seltools');
+  const el = state.sel ? byId(state.sel) : null;
+  const show = el && state.step === 'model' && ['select', 'force', 'moment', 'pin', 'roller'].includes(state.tool) && !state.pending && !(gesture && gesture.moved);
+  if (!show) { box.hidden = true; return; }
+  const g = svg.querySelector(`[data-id="${CSS.escape(el.id)}"]`);
+  if (!g) { box.hidden = true; return; }
+  let bb;
+  try { bb = g.getBBox(); } catch { box.hidden = true; return; }
+  let h = '';
+  if (ROTATABLE.has(el.type)) h += '<button data-st="rot+" title="15° gegen den Uhrzeigersinn drehen">↺</button><button data-st="rot-" title="15° im Uhrzeigersinn drehen">↻</button>';
+  if (el.type === 'moment') h += '<button data-st="mdir" title="Drehsinn umkehren">⇄</button>';
+  if (el.type === 'force') h += '<button data-st="flip" title="Richtung umkehren">⇄</button>';
+  if (DUPLICABLE.has(el.type)) h += '<button data-st="dup" title="Duplizieren (Strg+D)">⧉</button>';
+  h += '<button data-st="del" class="danger" title="Löschen (Entf)">🗑</button>';
+  box.innerHTML = h;
+  box.hidden = false;
+  const W = svg.clientWidth, bw = box.offsetWidth, bh = box.offsetHeight;
+  let x = bb.x + bb.width / 2 - bw / 2, y = bb.y - bh - 10;
+  if (y < 44) y = bb.y + bb.height + 10;
+  x = Math.max(6, Math.min(W - bw - 6, x));
+  y = Math.max(6, Math.min(svg.clientHeight - bh - 6, y));
+  box.style.left = x + 'px'; box.style.top = y + 'px';
+}
+$('#seltools').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-st]');
+  const el = state.sel ? byId(state.sel) : null;
+  if (!b || !el) return;
+  switch (b.dataset.st) {
+    case 'rot+': rotateBy(el, 15); break;
+    case 'rot-': rotateBy(el, -15); break;
+    case 'flip': rotateBy(el, 180); break;
+    case 'mdir': el.dir = el.dir === -1 ? 1 : -1; changed(); renderPanel(); break;
+    case 'dup': duplicateSelected(); break;
+    case 'del': deleteElement(el.id); break;
+  }
+});
+$('.edit-ctl').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-edit]');
+  if (b) (b.dataset.edit === 'undo' ? undo : redo)();
+});
 
 // ---- Freiheitsgrade
 function panelDof() {
@@ -1040,7 +1438,7 @@ function panelDof() {
     const b = byId(d.body);
     const dirOpts = d.coord === 'phi' ? [[-1, '↻ im Uhrzeigersinn'], [1, '↺ gegen Uhrzeigersinn']] : d.coord === 'x' ? [[1, '→ nach rechts'], [-1, '← nach links']] : [[1, '↑ nach oben'], [-1, '↓ nach unten']];
     h += `<div class="dof-item" data-dof="${d.id}"><div>
-      <div class="row"><span class="dof-title">${katexStr(nameTex(d.name))}</span><span class="muted">${d.coord === 'phi' ? 'Drehwinkel' : d.coord + '-Verschiebung'} von Körper ${esc(b?.label ?? '?')}</span></div>
+      <div class="row"><span class="dof-title">${katexStr(nameTex(d.name))}</span><span class="muted">${d.coord === 'phi' ? (b?.type === 'point' ? 'Bahnwinkel' : 'Drehwinkel') : d.coord + '-Verschiebung'} von Körper ${esc(b?.label ?? '?')}</span></div>
       <div class="row" style="margin-top:6px"><input class="inp" style="width:110px" data-dname value="${esc(d.name)}" title="Name, z. B. phi_1, x, s">
       <div class="seg">${dirOpts.map(([v, t]) => `<button data-ddir="${v}" class="${d.dir === v ? 'on' : ''}">${t}</button>`).join('')}</div></div></div>
       <button class="btn small danger" data-drem title="Entfernen">×</button></div>`;
@@ -1049,7 +1447,7 @@ function panelDof() {
 
   h += '<h3>Körper</h3><div class="card">';
   for (const b of bodies()) {
-    const rot = hasRotation(b);
+    const rot = hasRotation(b) || pointOnCurve(sys, b, false);
     const has = (c) => sys.dofs.some((d) => d.body === b.id && d.coord === c);
     h += `<div class="body-row ${state.sel === b.id ? 'sel' : ''}" data-body="${b.id}"><span class="bname">${esc(TYPES[b.type].name)} ${esc(b.label)}</span>
       <button class="chip ${has('x') ? 'on' : ''}" data-add="x">x</button><button class="chip ${has('y') ? 'on' : ''}" data-add="y">y</button><button class="chip ${has('phi') ? 'on' : ''}" data-add="phi" ${rot ? '' : 'disabled'}>φ</button></div>`;
@@ -1072,7 +1470,7 @@ function panelDof() {
   });
   panel.querySelector('[data-suggest]')?.addEventListener('click', () => {
     try {
-      const m = buildModel(sys);
+      const m = buildModel({ ...sys, dofs: [] });
       const s = suggestDofs(m);
       sys.dofs = [];
       for (const c of s) {
@@ -1353,6 +1751,7 @@ function loadSystem(sys) {
   state.sys = normalize(structuredClone(sys));
   state.sel = null; state.pending = null; state.resultKey = null; state.result = null; state.simOut = null; state.cm = null;
   save();
+  commitHistory();
   fitView();
   setStep('model');
 }
@@ -1394,6 +1793,8 @@ $('#help').addEventListener('click', (e) => { if (e.target.matches('[data-close]
 // ------------------------------------------------------------ Start
 buildPalette();
 loadInitial();
+hist.last = histSnap();
+updateEditCtl();
 setTool('select');
 setStep('model');
 if (state.fitOnStart) requestAnimationFrame(fitView);

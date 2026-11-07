@@ -8,6 +8,16 @@ Browser-App zum **Zeichnen, Herleiten und Simulieren ebener Mehrkörpersysteme**
    Stäbe werden über Anfangs- und Endpunkt gezeichnet (auch schräg), Kreisbahnen (Mulde/Kuppe) führen rollende oder gleitende
    Scheiben und Punktmassen. Seile/Federn dürfen freie Enden haben; Lager werden immer selbst gesetzt.
    Über masselose Knoten verbundene Elemente (Reihenschaltung) werden zu Ersatzelementen zusammengefasst (1/k = 1/k₁ + 1/k₂).
+   **Bedienhilfen beim Zeichnen** (Maus und Touch):
+   - Seile, Federn, Dämpfer, Gelenke, Drehfedern und Stäbe **in einem Zug ziehen** (Antippen–Antippen geht weiterhin).
+   - Verbindungen werden automatisch **gerade bzw. tangential an Scheiben** ausgerichtet; eine noch ungelagerte Masse rutscht dabei genau unter den Rollenrand.
+   - Hängt eine Masse nur an senkrechten Verbindungen, wird sie wie in Skizzen üblich **senkrecht geführt** (Panel: „Führung“ frei / senkrecht / waagrecht).
+   - Stäbe rasten an Anschlusspunkten ein und werden dort **automatisch gelenkig** angeschlossen.
+   - Beim Verschieben richten sich Körper an Anschlusspunkten anderer Elemente aus (**Hilfslinien**).
+   - Schwebende Leiste am ausgewählten Element: drehen, Richtung umkehren, duplizieren, löschen.
+   - Punktmassen auf Kreisbahnen: Der **Bahnwinkel φ** ist als Freiheitsgrad wählbar. Kreisbahn mit „◡ Mulde / ◠ Kuppe“ und „Halbkreis“ einrichten; Bahnenden und Mittelpunkt sind Fangpunkte für Federenden.
+   - **Vorgespannte Federn:** Weicht l₀ von der gezeichneten Länge ab (z. B. „entspannt Länge r“), wird die „Länge in der Zeichnung“ vorgeschlagen (z. B. `sqrt(2)*r`).
+   - **Rückgängig / Wiederholen** (↶ ↷, Strg+Z / Strg+Y), Duplizieren mit Strg+D.
 2. **Freiheitsgrade & Methode festlegen** – Lagrange 1. Art, Lagrange 2. Art oder d'Alembert-Lagrange,
    jeweils **linearisiert** (kleine Auslenkungen) oder **nichtlinear**. Freiheitsgrade (x, y, φ je Körper, mit positiver Richtung)
    werden in der Oberfläche gewählt, der Freiheitsgrad f wird automatisch geprüft.
@@ -44,7 +54,7 @@ python3 -m http.server 8000
 ## Modellannahmen
 
 - Ebene Bewegung; Koordinaten sind Auslenkungen aus der **gezeichneten Lage** (x nach rechts, y nach oben, ϑ gegen den Uhrzeigersinn).
-- Federn sind in der gezeichneten Lage entspannt (Länge l₀); Seile sind dehnstarr und straff.
+- Federn sind in der gezeichneten Lage entspannt (Länge l₀), außer es ist eine abweichende „Länge in der Zeichnung“ angegeben (Vorspannung); Seile sind dehnstarr und straff.
 - Liegt ein Seil-/Federende tangential an einer Scheibe, gilt es als aufgewickelt (Abwickellänge R·ϑ).
 - Linearisiert: Kinematik der abhängigen Koordinaten bis zur 2. Ordnung, Energien bis zur 2. Ordnung (z. B. Pendel-Rückstellung durch Gewicht);
   bei Lagrange 1. Art wird die geometrische Steifigkeit aus den statischen Zwangskräften λ₀ berücksichtigt.

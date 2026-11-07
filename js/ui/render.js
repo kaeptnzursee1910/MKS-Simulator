@@ -247,6 +247,7 @@ export function renderScene(sys, V, opts = {}) {
         }
         case 'pin': case 'roller': {
           const B = byId.get(el.at?.el); if (!B) break;
+          if (el.guide) { out.supports += g0 + drawGuide(B, el, V, env, c, sys) + '</g>'; break; }
           const P = V.S(...portWorld(B, el.at.port, env, D(B.id)));
           out.supports += g0 + drawSupport(P, V.dir(el.angle ?? -90), el.type === 'roller', c) + '</g>';
           break;
@@ -371,6 +372,13 @@ export function renderScene(sys, V, opts = {}) {
       }
     }
   }
+  if (opts.guides) {
+    for (const [a, b] of opts.guides) {
+      const A = V.S(...a), B = V.S(...b);
+      const u = norm([B[0] - A[0], B[1] - A[1]]);
+      out.overlay += seg(add2(A, u, -30), add2(B, u, 30), '#e0457b', 1, ' stroke-dasharray="4 3"') + circ(B, 3, '#e0457b', 1, '#e0457b');
+    }
+  }
   if (opts.preview) {
     const [a, b] = opts.preview;
     out.overlay += seg(V.S(...a), V.S(...b), ACC, 1.4, ' stroke-dasharray="5 4"');
@@ -436,6 +444,32 @@ function drawRod(el, V, env, d, c) {
   s += text(C[0] + n[0] * 22, C[1] + n[1] * 22, labelSpans(el.props.m) + ', ' + labelSpans(el.props.l), { color: c });
   s += bodyNo(el, C[0] - n[0] * 14, C[1] - n[1] * 14);
   return s;
+}
+/** Führungsschiene neben einem Körper (raumfest): senkrechte oder waagrechte Führung */
+function halfSize(B, env) {
+  if (B.type === 'disk') { const R = propNum(B, 'R', env, 0.1); return [R, R]; }
+  if (B.type === 'block') return [propNum(B, 'a', env, 0.2) / 2, propNum(B, 'b', env, 0.1) / 2];
+  if (B.type === 'rod') return [0.05, 0.05];
+  return [0.016, 0.016];
+}
+function drawGuide(B, el, V, env, c, sys) {
+  const C = V.S(B.x, B.y);
+  const [wx, wy] = halfSize(B, env);
+  const hx = wx * V.s, hy = wy * V.s;
+  const vertical = Math.abs(Math.sin(((el.angle ?? -90) * Math.PI) / 180)) < 0.5;
+  // Seite der Schiene: dort, wo kein Nachbarkörper anliegt
+  let sgn = vertical ? -1 : 1;
+  const free = (s) => !sys.elements.some((o) => {
+    if (o === B || !isBody(o)) return false;
+    const [ox, oy] = halfSize(o, env);
+    if (vertical) return Math.abs(o.y - B.y) < oy + wy && (s < 0 ? o.x < B.x : o.x > B.x) && Math.abs(o.x - B.x) < ox + wx + 0.06;
+    return Math.abs(o.x - B.x) < ox + wx && (s > 0 ? o.y < B.y : o.y > B.y) && Math.abs(o.y - B.y) < oy + wy + 0.06;
+  });
+  if (!free(sgn) && free(-sgn)) sgn = -sgn;
+  let a, b, side;
+  if (vertical) { const x = C[0] + sgn * (hx + 7); a = [x, C[1] - hy - 22]; b = [x, C[1] + hy + 22]; side = [sgn, 0]; }
+  else { const y = C[1] + sgn * (hy + 7); a = [C[0] - hx - 22, y]; b = [C[0] + hx + 22, y]; side = [0, sgn]; }
+  return seg(a, b, 'transparent', 12) + seg(a, b, c, 1.5) + hatch(a, b, side, c, 8, 7);
 }
 function drawSupport(P, d, roller, c, z = Z) {
   const n = perp(d);

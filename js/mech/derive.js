@@ -152,7 +152,8 @@ function introRows(doc, model, dofs, lin, an) {
     const dir = d.coord === 'phi' ? (q.sign === 1 ? 'positiv gegen den Uhrzeigersinn' : 'positiv im Uhrzeigersinn')
       : d.coord === 'x' ? (q.sign === 1 ? 'positiv nach rechts' : 'positiv nach links')
         : (q.sign === 1 ? 'positiv nach oben' : 'positiv nach unten');
-    doc.math(q.tex + ' = ' + (q.sign === 1 ? '' : '-') + q.abs.tex, `${d.coord === 'phi' ? 'Drehwinkel' : 'Verschiebung'} von Körper ${model.bodies.find((b) => [b.X, b.Y, b.TH].includes(q.abs)).label}, ${dir}`);
+    const qb = model.bodies.find((b) => [b.X, b.Y, b.TH].includes(q.abs));
+    doc.math(q.tex + ' = ' + (q.sign === 1 ? '' : '-') + q.abs.tex, `${d.coord === 'phi' ? (qb.pathAngle ? 'Bahnwinkel auf der Kreisbahn' : 'Drehwinkel') : 'Verschiebung'} von Körper ${qb.label}, ${dir}`);
   }
   for (const w of model.warnings || []) doc.text('Hinweis: ' + w);
   for (const sr of model.series || []) {
