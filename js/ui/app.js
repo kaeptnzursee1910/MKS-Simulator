@@ -197,8 +197,8 @@ const HINTS = {
   damper: 'Vom ersten zum zweiten Punkt ziehen (oder beide antippen). Anschlusspunkt = verbunden, leere Fläche = freies Ende. Wird automatisch gerade bzw. tangential ausgerichtet.',
   springdamper: 'Vom ersten zum zweiten Punkt ziehen (oder beide antippen). Anschlusspunkt = verbunden, leere Fläche = freies Ende. Wird automatisch gerade bzw. tangential ausgerichtet.',
   node: 'Freies Seil-/Federende antippen (oder leere Fläche): masseloser Verbindungspunkt für Reihenschaltungen.',
-  tspring: 'Drehbaren Körper antippen, dann zweiten Körper oder leere Fläche (Umgebung).',
-  tdamper: 'Drehbaren Körper antippen, dann zweiten Körper oder leere Fläche (Umgebung).',
+  tspring: 'Vom Körper (Stabende, Mitte oder Lager) zum zweiten Körper oder ins Leere (Umgebung) ziehen – oder beides antippen.',
+  tdamper: 'Vom Körper (Stabende, Mitte oder Lager) zum zweiten Körper oder ins Leere (Umgebung) ziehen – oder beides antippen.',
   force: 'Anschlusspunkt antippen, an dem die Kraft angreift.',
   moment: 'Drehbaren Körper antippen.',
 };
@@ -271,7 +271,7 @@ function draw() {
   }
   if (state.pending?.kind === 'rod' && state.pointerW) opts.preview = [state.pending.p, state.pointerW];
   if (state.pending?.kind === 'hinge' && state.pointerW) { const A = byId(state.pending.a.el); if (A) opts.preview = [portWorld(A, state.pending.a.port, opts.env), state.pointerW]; }
-  if (state.pending?.kind === 'torsion' && state.pointerW) { const A = byId(state.pending.a); if (A) opts.preview = [[A.x, A.y], state.pointerW]; }
+  if (state.pending?.kind === 'torsion' && state.pointerW) { const A = byId(state.pending.a); if (A) opts.preview = [portWorld(A, state.pending.port || 'c', opts.env), state.pointerW]; }
   opts.guides = state.guides;
   opts.handles = step === 'model' && state.tool === 'select';
   if (step === 'sim' && state.simOut) opts.disp = currentDisp();
@@ -450,6 +450,15 @@ function supportFreeEnd(fe, style) {
 }
 
 // ------------------------------------------------------------ Ausrichten, Geradeziehen, Führung
+/** Befestigungspunkt einer Drehfeder am Körper: bei Stäben das nächstgelegene Ende bzw. die Mitte */
+function torsionPort(b, w) {
+  if (b.type !== 'rod' && b.type !== 'block') return 'c';
+  const e = env();
+  const cand = ports(b, e).filter((p) => b.type === 'block' || ['e1', 'c', 'e2'].includes(p.id));
+  let best = 'c', bd = Infinity;
+  for (const p of cand) { const d = Math.hypot(b.x + p.w[0] - w[0], b.y + p.w[1] - w[1]); if (d < bd) { bd = d; best = p.id; } }
+  return best;
+}
 /** Weltpunkt eines Linienendes */
 function refPoint(ref) {
   if (ref?.el) { const X = byId(ref.el); return X ? portWorld(X, ref.port, env()) : [0, 0]; }
@@ -859,11 +868,13 @@ function tap(sx, sy, target) {
       const b = bodyAt(target, sx, sy);
       if (!state.pending) {
         if (!b || !hasRotation(b)) { toast('Bitte einen drehbaren Körper (Scheibe, Stab, drehbarer Klotz) antippen.'); return; }
-        state.pending = { kind: 'torsion', a: b.id }; updateHint(); draw(); return;
+        state.pending = { kind: 'torsion', a: b.id, port: torsionPort(b, w) }; updateHint(); draw(); return;
       }
       if (b && b.id === state.pending.a) { toast('Zweiten Körper oder leere Fläche wählen.'); return; }
       if (b && !hasRotation(b)) { toast('Der zweite Körper ist nicht drehbar.'); return; }
       const el = { id: newId('t'), type: t, a: state.pending.a, b: b ? b.id : null, props: {} };
+      if (state.pending.port && state.pending.port !== 'c') el.port = state.pending.port;
+      if (b) { const pb = torsionPort(b, w); if (pb !== 'c') el.portB = pb; }
       if (t === 'tspring') el.props.kt = 'kt_' + nextIndex('kt'); else el.props.dt = 'dt_' + nextIndex('dt');
       state.sys.elements.push(el); state.sel = el.id; state.pending = null;
       break;
@@ -1231,8 +1242,16 @@ function panelModel() {
         if (el.type !== 'rope' && !el.L0auto && el.props.Lz) h += '<p class="muted">Gezeichnete Länge ≠ l₀: Die Feder ist in der gezeichneten Lage vorgespannt (z. B. „im entspannten Zustand Länge r“). Die gezeichnete Länge wird aus der Zeichnung vorgeschlagen.</p>';
         h += '<p class="muted">Liegt ein Ende tangential an einer Scheibe, wird es als aufgewickelt behandelt.</p>';
         break;
-      case 'tspring': h += exprField('Drehsteifigkeit', 'kt', el); break;
-      case 'tdamper': h += exprField('Drehdämpfung', 'dt', el); break;
+      case 'tspring': case 'tdamper': {
+        h += el.type === 'tspring' ? exprField('Drehsteifigkeit', 'kt', el) : exprField('Drehdämpfung', 'dt', el);
+        const A = byId(el.a);
+        if (A?.type === 'rod') {
+          const pt = el.port || 'c';
+          h += `<div class="field"><label>Sitzt an</label><div class="seg">${[['e1', 'Ende 1'], ['c', 'Mitte'], ['e2', 'Ende 2']].map(([k, t]) => `<button data-tport="${k}" class="${pt === k ? 'on' : ''}">${t}</button>`).join('')}</div></div>`;
+        }
+        h += `<p class="muted">Wirkt auf die ${el.b ? 'relative Verdrehung der beiden Körper' : 'Verdrehung gegenüber der Umgebung'}; der Befestigungspunkt ändert nur die Zeichnung, nicht die Gleichungen.</p>`;
+        break;
+      }
       case 'force': h += exprField('Kraft F(t)', 'F', el) + angleField('Richtung' + unitTag('°'), el) + '<p class="muted">Z. B. <code>F_0*cos(Omega*t)</code>. Richtung bleibt raumfest.</p>'; break;
       case 'moment':
         h += exprField('Moment M(t)', 'M', el);
@@ -1322,6 +1341,7 @@ function bindModelPanel(el) {
   panel.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => { el.mode = b.dataset.mode; changed(); panelModel(); }));
   panel.querySelectorAll('[data-mdir]').forEach((b) => b.addEventListener('click', () => { el.dir = Number(b.dataset.mdir); changed(); panelModel(); }));
   panel.querySelector('[data-del]')?.addEventListener('click', () => deleteElement(el.id));
+  panel.querySelectorAll('[data-tport]').forEach((b) => b.addEventListener('click', () => { if (b.dataset.tport === 'c') delete el.port; else el.port = b.dataset.tport; changed(); panelModel(); }));
   panel.querySelectorAll('[data-guide]').forEach((b) => b.addEventListener('click', () => { setGuide(el, b.dataset.guide); changed(); panelModel(); }));
   panel.querySelectorAll('[data-gdir]').forEach((b) => b.addEventListener('click', () => { el.angle = b.dataset.gdir === 'v' ? 180 : -90; el.auto = false; changed(); panelModel(); }));
 }

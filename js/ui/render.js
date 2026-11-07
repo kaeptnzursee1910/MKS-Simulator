@@ -306,10 +306,16 @@ export function renderScene(sys, V, opts = {}) {
         }
         case 'tspring': case 'tdamper': {
           const A = byId.get(el.a); if (!A) break;
-          const dA = D(A.id) || {};
-          const C = V.S(A.x + (dA.u || 0), A.y + (dA.v || 0));
+          // Befestigungspunkt (Stabende, Mitte …) – bewegt sich mit dem Körper
+          const C = V.S(...portWorld(A, el.port || 'c', env, D(A.id)));
           let T;
-          if (el.b) { const B = byId.get(el.b); if (!B) break; const dB = D(B.id) || {}; T = V.S(B.x + (dB.u || 0), B.y + (dB.v || 0)); }
+          if (el.b) {
+            const B = byId.get(el.b); if (!B) break;
+            const dB = D(B.id) || {};
+            T = V.S(...portWorld(B, el.portB || 'c', env, dB));
+            // gemeinsamer Drehpunkt: Strich zur Körpermitte des zweiten Körpers
+            if (Math.hypot(T[0] - C[0], T[1] - C[1]) < 18) T = V.S(B.x + (dB.u || 0), B.y + (dB.v || 0));
+          }
           out.supports += g0 + drawTorsion(el, C, T, c) + '</g>';
           break;
         }
