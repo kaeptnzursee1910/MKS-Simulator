@@ -26,7 +26,7 @@ Browser-App zum **Zeichnen, Herleiten und Simulieren ebener Mehrkörpersysteme**
    werden in der Oberfläche gewählt, der Freiheitsgrad f wird automatisch geprüft.
 3. **Bewegungsgleichungen** – nichtlineare Kinematik löst Bindungen auch nach Winkeln auf (arcsin/arctan, z. B. gleitende Stabenden); symbolische Herleitung mit Zwischenschritten (Kinematik, T, U, D, generalisierte Kräfte,
    Jacobi-Matrizen bzw. Zwangskräfte λ) und Matrizenform; als LaTeX kopierbar.
-4. **Simulation** – Anfangswerte, Zeitdiskretisierung (explizites Euler, symplektisches Euler, Heun, Runge-Kutta 4), Schrittweite;
+4. **Simulation** – Zahlenwerte der Parameter (erst hier; Modell und Herleitung bleiben symbolisch), Anfangswerte, Zeitdiskretisierung (explizites Euler, symplektisches Euler, Heun, Runge-Kutta 4), Schrittweite;
    Animation der Zeichnung und Zeitverläufe (q, q̇, λ, Energie), CSV-Export.
 
 ## Starten
