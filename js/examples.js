@@ -131,4 +131,22 @@ export const EXAMPLES = [
       sim: { init: { q1: { q: '0', qd: '0' } }, T: 2, h: 0.001, integrator: 'rk4' },
     },
   },
+  {
+    name: 'Stab: Ende A auf waagrechter, Ende B auf kreisförmiger Gleitbahn',
+    nonlinearOnly: true,
+    sys: {
+      elements: [
+        { id: 'b1', type: 'rod', label: '1', x: 0.259808, y: 0.15, angle: 30, props: { m: 'm', l: 'l', J: 'm*l^2/12' } },
+        { id: 'tA', type: 'roller', track: true, at: { el: 'b1', port: 'e1' }, angle: 90 },
+        { id: 'tB', type: 'roller', track: true, circle: true, side: 1, at: { el: 'b1', port: 'e2' }, angle: -90, props: { rho: 'r' } },
+        { id: 'w1', type: 'fix', x: -0.3, y: 0, angle: 0 },
+        { id: 's1', type: 'spring', a: { el: 'w1', port: 'c' }, b: { el: 'b1', port: 'e1' }, props: { k: 'k', L0: '0.3' } },
+      ],
+      params: { m: 1, l: 0.6, r: 0.3, k: 300, g: 9.81 },
+      gravity: true,
+      dofs: [{ id: 'q1', body: 'tB', coord: 's', dir: 1, name: 'psi' }],
+      method: 'L2', mode: 'nonlinear',
+      sim: { init: { q1: { q: '0.2', qd: '0' } }, T: 2, h: 0.001, integrator: 'rk4' },
+    },
+  },
 ];

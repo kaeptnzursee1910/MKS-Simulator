@@ -1,6 +1,6 @@
 // Hauptsteuerung der Benutzeroberfläche
 import { TYPES, isBody, isLine, hasRotation, ports, portWorld, propNum, propExpr, findPort } from '../mech/elements.js';
-import { ensureParams, usedParams, paramEnv, buildModel, pointOnCurve } from '../mech/model.js';
+import { ensureParams, usedParams, paramEnv, buildModel, pointOnCurve, circleTrackInfo } from '../mech/model.js';
 import { setupDofs, analyze, suggestDofs } from '../mech/kinematics.js';
 import { derive, METHODS } from '../mech/derive.js';
 import { compile, simulate, INTEGRATORS, evalInput } from '../mech/numeric.js';
@@ -550,8 +550,35 @@ function createTrack(p, deg) {
   if (gd?.auto) setGuide(B, 'none');
   let a = deg + 90; if (a > 180) a -= 360;
   const el = { id: newId('s'), type: 'roller', track: true, at: p, angle: a };
+  // liegt der Punkt auf einer gezeichneten Kreisbahn, gleitet er auf ihr
+  const P = portWorld(B, p.port, env());
+  for (const g of state.sys.elements) {
+    if (g.type !== 'curve') continue;
+    const rho = propNum(g, 'rho', env(), 0.5);
+    const dist = Math.hypot(P[0] - g.x, P[1] - g.y);
+    if (Math.abs(dist - rho) < Math.max(0.004, 8 / V.s)) {
+      el.circle = true; el.curveRef = g.id;
+      const tang = (Math.atan2(P[1] - g.y, P[0] - g.x) * 180) / Math.PI + 90;
+      el.angle = Math.round(tang / 15) * 15 + 90; if (el.angle > 180) el.angle -= 360;
+      if (Math.abs(dist - rho) > 0.002) toast('Der Punkt liegt nicht genau auf der Kreisbahn – bitte genau platzieren.', 3500);
+      else toast('Gleitet auf der Kreisbahn.');
+      break;
+    }
+  }
   state.sys.elements.push(el);
   return el;
+}
+/** Gleitbahn gerade ↔ kreisförmig umschalten */
+function setTrackCircle(el, on) {
+  if (on) {
+    el.circle = true; el.side = 1;
+    const n = 'rho_' + nextIndex('rho');
+    el.props = { ...(el.props || {}), rho: n };
+    addParamDefaults({ [n]: 0.3 });
+  } else {
+    delete el.circle; delete el.side; delete el.curveRef;
+    if (el.props) delete el.props.rho;
+  }
 }
 /** Bahnrichtung in Grad (−180, 180] */
 function trackDeg(el) { let d = ((((el.angle ?? -90) - 90) % 360) + 360) % 360; if (d > 180) d -= 360; return d; }
@@ -562,7 +589,7 @@ function trackLabel(el) {
   const B = byId(el.at?.el);
   const i = tracks().indexOf(el) + 1;
   const end = { e1: 'Ende 1', e2: 'Ende 2', c: 'Mitte' }[el.at?.port] || el.at?.port;
-  return `Gleitbahn ${i}` + (B ? ` (${bodyName(B)}, ${end})` : '');
+  return `${el.circle ? 'Kreis-Gleitbahn' : 'Gleitbahn'} ${i}` + (B ? ` (${bodyName(B)}, ${end})` : '');
 }
 /** Befestigungspunkt einer Drehfeder am Körper: bei Stäben das nächstgelegene Ende bzw. die Mitte */
 function torsionPort(b, w) {
@@ -1301,7 +1328,7 @@ function paramUnits() {
   return units;
 }
 function coordUnit(c) {
-  if (c.dof) return c.dof.coord === 'phi' ? 'rad' : 'm';
+  if (c.dof) return c.dof.coord === 'phi' || (c.dof.coord === 's' && byId(c.dof.body)?.circle) ? 'rad' : 'm';
   return c.name.startsWith('T_') ? 'rad' : 'm';
 }
 function exprField(label, key, el) {
@@ -1352,9 +1379,17 @@ function panelModel() {
       case 'pin': h += angleField('Richtung' + unitTag('°'), el) + '<p class="muted">Festlager: Punkt unverschieblich, Drehung frei.</p>'; break;
       case 'roller':
         if (el.track) {
-          h += `<div class="field"><label>Bahnrichtung${unitTag('°')}</label><div class="row"><input type="number" step="15" data-tdir value="${trackDeg(el)}" style="width:90px" class="inp"><button class="btn small" data-rot="-15">↻ 15°</button><button class="btn small" data-rot="15">↺ 15°</button></div></div>`;
+          h += `<div class="field"><label>Form</label><div class="seg"><button data-tform="line" class="${el.circle ? '' : 'on'}">─ gerade</button><button data-tform="circle" class="${el.circle ? 'on' : ''}">◠ Kreis</button></div></div>`;
+          if (el.circle && el.curveRef) h += '<p class="muted">Gleitet auf der gezeichneten Kreisbahn (Mittelpunkt und Radius von dort).</p>';
+          else if (el.circle) {
+            h += exprField('Radius ρ', 'rho', el);
+            h += `<div class="field"><label>Krümmung</label><button class="btn small" data-tside>Mittelpunkt auf andere Seite</button></div>`;
+          }
+          h += `<div class="field"><label>${el.circle ? 'Tangente' : 'Bahnrichtung'}${unitTag('°')}</label><div class="row"><input type="number" step="15" data-tdir value="${trackDeg(el)}" style="width:90px" class="inp"><button class="btn small" data-rot="-15">↻ 15°</button><button class="btn small" data-rot="15">↺ 15°</button></div></div>`;
           h += `<div class="field"><label>Schraffur</label><button class="btn small" data-tflip>Seite wechseln</button></div>`;
-          h += '<p class="muted">Gleitbahn: Der Anschlusspunkt gleitet reibungsfrei entlang der Bahn, quer dazu ist er gesperrt. Den Weg entlang der Bahn (z. B. x<sub>A</sub>) kann man unter „Freiheitsgrade“ als Koordinate wählen.</p>';
+          h += el.circle
+            ? '<p class="muted">Kreisförmige Gleitbahn: Der Anschlusspunkt bleibt im Abstand ρ vom Mittelpunkt. Seinen Bahnwinkel ψ kann man unter „Freiheitsgrade“ als Koordinate wählen.</p>'
+            : '<p class="muted">Gleitbahn: Der Anschlusspunkt gleitet reibungsfrei entlang der Bahn, quer dazu ist er gesperrt. Den Weg entlang der Bahn (z. B. x<sub>A</sub>) kann man unter „Freiheitsgrade“ als Koordinate wählen.</p>';
           break;
         }
         if (el.guide) {
@@ -1492,6 +1527,8 @@ function bindModelPanel(el) {
   panel.querySelector('[data-del]')?.addEventListener('click', () => deleteElement(el.id));
   panel.querySelector('[data-tdir]')?.addEventListener('input', (e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) { let a = v + 90; if (a > 180) a -= 360; el.angle = a; changed({ typing: true }); } });
   panel.querySelector('[data-tflip]')?.addEventListener('click', () => { el.flip = !el.flip; changed(); panelModel(); });
+  panel.querySelectorAll('[data-tform]').forEach((b) => b.addEventListener('click', () => { setTrackCircle(el, b.dataset.tform === 'circle'); state.sys.dofs = state.sys.dofs.filter((d) => d.body !== el.id); changed(); panelModel(); }));
+  panel.querySelector('[data-tside]')?.addEventListener('click', () => { el.side = el.side === -1 ? 1 : -1; changed(); panelModel(); });
   panel.querySelector('[data-massless]')?.addEventListener('change', (e) => { setMassless(el, e.target.checked); changed(); panelModel(); });
   panel.querySelectorAll('[data-tport]').forEach((b) => b.addEventListener('click', () => { if (b.dataset.tport === 'c') delete el.port; else el.port = b.dataset.tport; changed(); panelModel(); }));
   panel.querySelectorAll('[data-guide]').forEach((b) => b.addEventListener('click', () => { setGuide(el, b.dataset.guide); changed(); panelModel(); }));
@@ -1614,10 +1651,11 @@ function panelDof() {
   }
   for (const d of sys.dofs) {
     const b = byId(d.body);
-    const dirOpts = d.coord === 's' ? [[1, arrowFor(trackDeg(b || {})) + ' in Bahnrichtung'], [-1, arrowFor(trackDeg(b || {}) + 180) + ' entgegen']]
+    const dirOpts = d.coord === 's' && b?.circle ? [[-1, '↻ im Uhrzeigersinn'], [1, '↺ gegen Uhrzeigersinn']]
+      : d.coord === 's' ? [[1, arrowFor(trackDeg(b || {})) + ' in Bahnrichtung'], [-1, arrowFor(trackDeg(b || {}) + 180) + ' entgegen']]
       : d.coord === 'phi' ? [[-1, '↻ im Uhrzeigersinn'], [1, '↺ gegen Uhrzeigersinn']] : d.coord === 'x' ? [[1, '→ nach rechts'], [-1, '← nach links']] : [[1, '↑ nach oben'], [-1, '↓ nach unten']];
     h += `<div class="dof-item" data-dof="${d.id}"><div>
-      <div class="row"><span class="dof-title">${katexStr(nameTex(d.name))}</span><span class="muted">${d.coord === 's' ? 'Weg entlang ' + esc(b ? trackLabel(b) : 'Gleitbahn') : (d.coord === 'phi' ? (b?.type === 'point' ? 'Bahnwinkel' : 'Drehwinkel') : d.coord + '-Verschiebung') + ' von Körper ' + esc(b?.label ?? '?')}</span></div>
+      <div class="row"><span class="dof-title">${katexStr(nameTex(d.name))}</span><span class="muted">${d.coord === 's' ? (b?.circle ? 'Bahnwinkel auf ' : 'Weg entlang ') + esc(b ? trackLabel(b) : 'Gleitbahn') : (d.coord === 'phi' ? (b?.type === 'point' ? 'Bahnwinkel' : 'Drehwinkel') : d.coord + '-Verschiebung') + ' von Körper ' + esc(b?.label ?? '?')}</span></div>
       <div class="row" style="margin-top:6px"><input class="inp" style="width:110px" data-dname value="${esc(d.name)}" title="Name, z. B. phi_1, x, s">
       <div class="seg">${dirOpts.map(([v, t]) => `<button data-ddir="${v}" class="${d.dir === v ? 'on' : ''}">${t}</button>`).join('')}</div></div></div>
       <button class="btn small danger" data-drem title="Entfernen">×</button></div>`;
@@ -1637,9 +1675,9 @@ function panelDof() {
     h += '<h3>Gleitpunkte</h3><div class="card">';
     for (const tr of tracks()) {
       const on = sys.dofs.some((d) => d.body === tr.id && d.coord === 's');
-      h += `<div class="body-row ${state.sel === tr.id ? 'sel' : ''}" data-track="${tr.id}"><span class="bname">${esc(trackLabel(tr))}</span><button class="chip ${on ? 'on' : ''}" data-tadd title="Weg entlang der Bahn als Freiheitsgrad">s ${arrowFor(trackDeg(tr))}</button></div>`;
+      h += `<div class="body-row ${state.sel === tr.id ? 'sel' : ''}" data-track="${tr.id}"><span class="bname">${esc(trackLabel(tr))}</span><button class="chip ${on ? 'on' : ''}" data-tadd title="${tr.circle ? 'Bahnwinkel' : 'Weg entlang der Bahn'} als Freiheitsgrad">${tr.circle ? 'ψ' : 's ' + arrowFor(trackDeg(tr))}</button></div>`;
     }
-    h += '<p class="muted">Weg des Gleitpunkts entlang seiner Bahn, z. B. x<sub>A</sub> für ein waagrecht gleitendes Stabende.</p></div>';
+    h += '<p class="muted">Weg des Gleitpunkts entlang seiner Bahn, z. B. x<sub>A</sub> für ein waagrecht gleitendes Stabende; bei kreisförmigen Bahnen der Bahnwinkel ψ.</p></div>';
   }
   h += `<button class="btn primary block" data-derive ${analysis?.ok ? '' : 'disabled'}>Bewegungsgleichungen herleiten →</button>`;
   panel.innerHTML = h;
@@ -1682,12 +1720,12 @@ function addDof(bodyId, coord) {
   let name;
   if (coord === 's') {
     const td = trackDeg(b);
-    const base = td === 0 || td === 180 ? 'x' : Math.abs(td) === 90 ? 'y' : 's';
+    const base = b.circle ? 'psi' : td === 0 || td === 180 ? 'x' : Math.abs(td) === 90 ? 'y' : 's';
     name = base + '_' + (tracks().indexOf(b) + 1);
   } else name = (coord === 'phi' ? 'phi' : coord) + '_' + b.label;
   if (used.has(name)) name += 'b';
   let i = 1; while (state.sys.dofs.some((d) => d.id === 'q' + i)) i++;
-  state.sys.dofs.push({ id: 'q' + i, body: bodyId, coord, dir: coord === 'phi' ? -1 : coord === 'y' ? -1 : coord === 's' && trackDeg(b) === 180 ? -1 : 1, name });
+  state.sys.dofs.push({ id: 'q' + i, body: bodyId, coord, dir: coord === 'phi' ? -1 : coord === 'y' ? -1 : coord === 's' && !b.circle && trackDeg(b) === 180 ? -1 : 1, name });
 }
 function toggleDof(bodyId, coord) {
   const ex = state.sys.dofs.find((d) => d.body === bodyId && d.coord === coord);
@@ -1756,7 +1794,7 @@ function panelSim() {
   h += '<h3>Anfangswerte</h3><div class="card"><table class="ptable"><tr><td></td><td class="muted" style="font-family:system-ui;font-style:normal;font-size:12px">q(0)</td><td class="muted" style="font-size:12px">q̇(0)</td><td></td></tr>';
   for (const d of sys.dofs) {
     const iv = sys.sim.init[d.id] || (sys.sim.init[d.id] = { q: '0', qd: '0' });
-    h += `<tr><td>${katexStr(nameTex(d.name))}</td><td><input data-iq="${d.id}" value="${esc(iv.q)}"></td><td><input data-iqd="${d.id}" value="${esc(iv.qd)}"></td><td class="unit-cell">${d.coord === 'phi' ? 'rad<br>rad/s' : 'm<br>m/s'}</td></tr>`;
+    h += `<tr><td>${katexStr(nameTex(d.name))}</td><td><input data-iq="${d.id}" value="${esc(iv.q)}"></td><td><input data-iqd="${d.id}" value="${esc(iv.qd)}"></td><td class="unit-cell">${d.coord === 'phi' || (d.coord === 's' && byId(d.body)?.circle) ? 'rad<br>rad/s' : 'm<br>m/s'}</td></tr>`;
   }
   h += '</table><p class="muted">Winkel in rad (z. B. <code>10*pi/180</code>), Längen in m.</p></div>';
   h += '<h3>Zeitdiskretisierung</h3><div class="card">';

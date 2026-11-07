@@ -161,7 +161,7 @@ function solveFor(e, z, refEnv, envs) {
     return simplify(mul(MONE, rest, pow(a, MONE)));
   }
   // Winkel aus  A·cos z + B·sin z + C = 0  (z. B. gleitendes Stabende) → arcsin/arctan
-  const tr = solveTrig(e, z, refEnv);
+  const tr = solveTrig(e, z, refEnv, envs);
   if (tr) return tr;
   // Wurzel isolieren: e = C*sqrt(X) + R
   const S = findSqrt(e, z);
@@ -196,10 +196,24 @@ function replaceTrig(x, z, S, C) {
   }
 }
 /** A·cos z + B·sin z + C = 0 nach z auflösen; Zweig so, dass z in der gezeichneten Lage 0 ist */
-function solveTrig(e, z, refEnv) {
+function solveTrig(e, z, refEnv, envs) {
   const S = sym('__trigS'), C = sym('__trigC');
   const f = expand(replaceTrig(e, z, S, C));
   if (has(f, z)) return null;
+  // direkte Lösung z = u, wenn u als Winkel in der Gleichung vorkommt (z. B. sin z = sin ψ ⇒ z = ψ):
+  // gilt für alle Lagen, nicht nur im Hauptzweig des arcsin
+  const cands = new Map();
+  const walk = (x) => {
+    if (x.t === 'fn' && (x.name === 'sin' || x.name === 'cos') && !has(x.arg, z)) cands.set(x.arg.key, x.arg);
+    for (const c of (x.t === 'add' ? x.terms : x.t === 'mul' ? x.factors : x.t === 'pow' ? [x.base, x.exp] : x.t === 'fn' ? [x.arg] : [])) walk(c);
+  };
+  walk(e);
+  for (const u of cands.values()) {
+    try {
+      if (Math.abs(evalNum(u, refEnv)) > 1e-9) continue;
+      if (envs && numericallyZero(simplify(subs(e, new Map([[z.name, u]]))), envs, 1e-9)) return u;
+    } catch { /* nächster Kandidat */ }
+  }
   let A = simplify(diff(f, C)), B = simplify(diff(f, S));
   if (hasAny(A, [S.name, C.name]) || hasAny(B, [S.name, C.name])) return null;
   let R = simplify(subs(f, new Map([[S.name, ZERO], [C.name, ZERO]])));

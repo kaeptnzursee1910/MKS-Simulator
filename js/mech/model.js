@@ -126,6 +126,25 @@ export function resolveSeries(sys, env) {
   return out;
 }
 
+/** Kreisförmige Gleitbahn: Mittelpunkt (Welt), Winkel β des Gleitpunkts (Grad), ggf. zugehörige Kreisbahn */
+export function circleTrackInfo(sys, el, env) {
+  const B = sys.elements.find((e) => e.id === el.at?.el);
+  const P = B ? portWorld(B, el.at.port, env) : [0, 0];
+  const curve = el.curveRef ? sys.elements.find((e) => e.id === el.curveRef) : null;
+  let C, beta;
+  if (curve) {
+    C = [curve.x, curve.y];
+    beta = (Math.atan2(P[1] - C[1], P[0] - C[0]) * 180) / Math.PI;
+  } else {
+    // Kreis berührt die Bahntangente im Gleitpunkt; Mittelpunkt auf der Seite side·n
+    const rhoN = propNum(el, 'rho', env, 0.3);
+    const a = ((el.angle ?? -90) * Math.PI) / 180, s = el.side === -1 ? -1 : 1;
+    C = [P[0] + s * rhoN * Math.cos(a), P[1] + s * rhoN * Math.sin(a)];
+    beta = (el.angle ?? -90) + (s === 1 ? 180 : 0);
+  }
+  return { C, beta, P, curve, rhoN: curve ? propNum(curve, 'rho', env, 0.5) : propNum(el, 'rho', env, 0.3) };
+}
+
 /** Gleitet eine Punktmasse auf einer Kreisbahn? (dann ist der Bahnwinkel eine Koordinate) */
 export function pointOnCurve(sys, el, onlyIfChosen = true) {
   if (el.type !== 'point') return false;
@@ -176,7 +195,7 @@ export function buildModel(sys) {
     if (el.type !== 'roller' || !el.track) continue;
     ti++;
     if (!(sys.dofs || []).some((d) => d.body === el.id && d.coord === 's')) continue;
-    const c = makeCoord('S_' + el.id, 's_{' + ti + '}', 900 + ti);
+    const c = makeCoord('S_' + el.id, el.circle ? '\\psi_{B' + ti + '}' : 's_{' + ti + '}', 900 + ti);
     c.track = el;
     trackCoords.set(el.id, c);
     absCoords.push(c);
@@ -301,6 +320,22 @@ export function buildModel(sys) {
         const A = anchor(el.at);
         if (!A.body) throw new Error('Loslager muss an einem Körper sitzen.');
         const d = disp(A.body, A.port.s);
+        if (el.track && el.circle) {
+          // kreisförmige Gleitbahn: Gleitpunkt bleibt im Abstand ρ vom Mittelpunkt
+          const ci = circleTrackInfo(sys, el, env);
+          const rho = ci.curve ? propExpr(ci.curve, 'rho') : propExpr(el, 'rho');
+          const [cb, sb] = exactTrig(ci.beta, 0.5);
+          const sc = trackCoords.get(el.id);
+          if (sc) {
+            // Bahnwinkel ψ (gegen den Uhrzeigersinn) als Koordinate
+            const c = cos(sc.s), sn = sin(sc.s);
+            cons.push({ expr: add(d[0], mul(MONE, rho, add(mul(cb, c), mul(MONE, sb, sn), mul(MONE, cb)))), label: nm + ' (auf Kreisbahn, x)', el });
+            cons.push({ expr: add(d[1], mul(MONE, rho, add(mul(sb, c), mul(cb, sn), mul(MONE, sb)))), label: nm + ' (auf Kreisbahn, y)', el });
+          } else {
+            cons.push({ expr: simplify(add(pow(add(mul(rho, cb), d[0]), 2), pow(add(mul(rho, sb), d[1]), 2), mul(MONE, pow(rho, 2)))), label: nm + ' (auf Kreisbahn)', el });
+          }
+          break;
+        }
         const n = exactTrig((el.angle ?? -90));
         cons.push({ expr: add(mul(n[0], d[0]), mul(n[1], d[1])), label: nm, el });
         const sc = trackCoords.get(el.id);
