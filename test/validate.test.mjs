@@ -313,6 +313,59 @@ const CASES = [
     // φ = π/2 + q:  m r² q̈ + k r² (sin(φ/2) − cos(φ/2)) + m g r cos φ = 0
     ref: ['m*r^2*Q1dd + sqrt(2)*k*r^2*sin(Q1/2) - m*g*r*sin(Q1)'],
   },
+  {
+    name: 'Masseloser Stab als Pendel mit Punktmasse am Ende',
+    modes: ['linear', 'nonlinear'],
+    sys: {
+      elements: [
+        { id: 'b1', type: 'rod', label: '1', x: 0, y: 0, angle: 90, massless: true, props: { l: 'l' } },
+        { id: 'p1', type: 'pin', at: { el: 'b1', port: 'e2' }, angle: 90 },
+        { id: 'b2', type: 'point', label: '2', x: 0, y: -0.25, props: { m: 'm' } },
+        { id: 'h1', type: 'hinge', a: { el: 'b1', port: 'e1' }, b: { el: 'b2', port: 'c' } },
+      ],
+      params: { m: 1.3, l: 0.5, g: 9.81 }, gravity: true,
+      dofs: [{ id: 'q1', body: 'b1', coord: 'phi', dir: 1, name: 'phi' }],
+    },
+    ref: ['m*l^2*Q1dd + m*g*l*sin(Q1)'],
+    refLin: ['m*l^2*Q1dd + m*g*l*Q1'],
+  },
+  {
+    name: 'Zwei Massen über masselosen Gelenkstab gekoppelt (Stab bleibt waagrecht geführt)',
+    modes: ['linear'],
+    sys: {
+      elements: [
+        ground(0.3, 0),
+        { id: 'b1', type: 'block', label: '1', x: 0, y: 0.06, props: { m: 'm_1', a: '0.2', b: '0.12', rot: false } },
+        { id: 'b2', type: 'block', label: '2', x: 0.6, y: 0.06, props: { m: 'm_2', a: '0.2', b: '0.12', rot: false } },
+        { id: 'c1', type: 'contact', body: 'b1', ground: 'g0.30', mode: 'slide' },
+        { id: 'c2', type: 'contact', body: 'b2', ground: 'g0.30', mode: 'slide' },
+        { id: 'b3', type: 'rod', label: '3', x: 0.3, y: 0.06, angle: 0, massless: true, props: { l: '0.4' } },
+        { id: 'h1', type: 'hinge', a: { el: 'b3', port: 'e1' }, b: { el: 'b1', port: 'r' } },
+        { id: 'h2', type: 'hinge', a: { el: 'b3', port: 'e2' }, b: { el: 'b2', port: 'l' } },
+        { id: 'w1', type: 'fix', x: -0.4, y: 0.06, angle: 0 },
+        { id: 's1', type: 'spring', a: { el: 'w1', port: 'c' }, b: { el: 'b1', port: 'l' }, props: { k: 'k', L0: '0.3' } },
+      ],
+      params: { m_1: 1.2, m_2: 0.7, k: 250, g: 9.81 }, gravity: true,
+      dofs: [{ id: 'q1', body: 'b1', coord: 'x', dir: 1, name: 'x' }],
+    },
+    ref: ['(m_1 + m_2)*Q1dd + k*Q1'],
+  },
+  {
+    name: 'Pendel mit vorgespannter Feder senkrecht am unteren Ende (geometrische Steifigkeit)',
+    modes: ['linear'],
+    sys: {
+      elements: [
+        { id: 'b1', type: 'rod', label: '1', x: 0, y: 0, angle: 90, props: { m: 'm', J: 'J', l: 'l' } },
+        { id: 'p1', type: 'pin', at: { el: 'b1', port: 'e2' }, angle: 90 },
+        { id: 'w1', type: 'fix', x: 0, y: -0.55, angle: 90 },
+        { id: 's1', type: 'spring', a: { el: 'b1', port: 'e1' }, b: { el: 'w1', port: 'c' }, props: { k: 'k', L0: 'L_0', Lz: 'h' } },
+      ],
+      params: { m: 1, J: 0.02, l: 0.5, k: 100, L_0: 0.2, h: 0.3, g: 9.81 }, gravity: true,
+      dofs: [{ id: 'q1', body: 'b1', coord: 'phi', dir: 1, name: 'phi' }],
+    },
+    // Federlänge bis 2. Ordnung: h + (l + l²/h) φ²/2  ⇒  Zusatzsteifigkeit k (h − L₀)(l + l²/h)
+    ref: ['(J + m*l^2/4)*Q1dd + (m*g*l/2 + k*(h - L_0)*(l + l^2/h))*Q1'],
+  },
 ];
 
 // ------------------------------------------------------------------

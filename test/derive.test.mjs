@@ -7,7 +7,8 @@ const verbose = process.argv.includes('-v');
 const results = {}; let mismatch = 0;
 for (const [i, ex] of EXAMPLES.entries()) {
   if (only !== undefined && only !== 'all' && String(i) !== only) continue;
-  for (const method of ['L2', 'DAL', 'L1']) for (const mode of ['linear', 'nonlinear']) {
+  // Beispiele, deren gezeichnete Lage keine Gleichgewichtslage ist, werden nur nichtlinear verglichen
+  for (const method of ['L2', 'DAL', 'L1']) for (const mode of ex.nonlinearOnly ? ['nonlinear'] : ['linear', 'nonlinear']) {
     const sys = structuredClone(ex.sys); sys.method = method; sys.mode = mode;
     const t0 = Date.now();
     try {

@@ -154,8 +154,10 @@ export function buildModel(sys) {
     const onCurve = pointOnCurve(sys, el);
     const b = {
       el, label: lab,
-      m: propExpr(el, 'm'),
-      J: hasRotation(el) ? propExpr(el, 'J') : onCurve ? ZERO : null,
+      // masselose Stäbe: keine Masse/Trägheit – tauchen in T, U_G und den Gleichungen nicht auf
+      m: el.massless ? ZERO : propExpr(el, 'm'),
+      J: hasRotation(el) ? (el.massless ? ZERO : propExpr(el, 'J')) : onCurve ? ZERO : null,
+      massless: !!el.massless,
       X: makeCoord('X_' + el.id, 'x_{' + lab + '}', o + 1),
       Y: makeCoord('Y_' + el.id, 'y_{' + lab + '}', o + 2),
       TH: hasRotation(el) ? makeCoord('T_' + el.id, '\\vartheta_{' + lab + '}', o + 3) : onCurve ? makeCoord('T_' + el.id, '\\psi_{' + lab + '}', o + 3) : null,
@@ -166,11 +168,25 @@ export function buildModel(sys) {
   }
   const absCoords = [];
   for (const b of bodies) { absCoords.push(b.X, b.Y); if (b.TH) absCoords.push(b.TH); }
+  // Gleitbahnen: Verschiebung des Gleitpunkts entlang der Bahn als zusätzliche Koordinate,
+  // sofern sie als Freiheitsgrad gewählt ist
+  const trackCoords = new Map();
+  let ti = 0;
+  for (const el of sys.elements) {
+    if (el.type !== 'roller' || !el.track) continue;
+    ti++;
+    if (!(sys.dofs || []).some((d) => d.body === el.id && d.coord === 's')) continue;
+    const c = makeCoord('S_' + el.id, 's_{' + ti + '}', 900 + ti);
+    c.track = el;
+    trackCoords.set(el.id, c);
+    absCoords.push(c);
+  }
 
   const refEnv = { ...env };
   for (const c of absCoords) { refEnv[c.s.name] = 0; refEnv[c.d.name] = 0; refEnv[c.dd.name] = 0; }
 
   const elName = (el) => {
+    if (el.track) { const b = byId.get(el.at?.el); return 'Gleitbahn' + (b?.label ? ' Körper ' + b.label : ''); }
     if (el.guide) { const b = byId.get(el.at?.el); return 'Führung' + (b?.label ? ' Körper ' + b.label : ''); }
     return TYPES[el.type].name + (el.label ? ' ' + el.label : '');
   };
@@ -287,6 +303,9 @@ export function buildModel(sys) {
         const d = disp(A.body, A.port.s);
         const n = exactTrig((el.angle ?? -90));
         cons.push({ expr: add(mul(n[0], d[0]), mul(n[1], d[1])), label: nm, el });
+        const sc = trackCoords.get(el.id);
+        // Bahnrichtung t = n um −90° gedreht: s = t · Verschiebung des Gleitpunkts
+        if (sc) cons.push({ expr: add(sc.s, mul(MONE, add(mul(n[1], d[0]), mul(MONE, n[0], d[1])))), label: nm + ' (Weg entlang der Bahn)', el });
         break;
       }
       case 'hinge': {
@@ -357,7 +376,7 @@ export function buildModel(sys) {
   const Ut = add(...tsprings.map((s) => mul(num(1, 2), s.k, pow(s.rel, 2))));
   const U = add(Ug, Us, Ut);
 
-  return { sys, env, refEnv, warnings, series, bodies, bodyOf, absCoords, cons, springs, dampers, tsprings, tdampers, loads, moments, g, U, Ug, lineInfo, elName };
+  return { sys, env, refEnv, warnings, series, bodies, bodyOf, trackCoords, absCoords, cons, springs, dampers, tsprings, tdampers, loads, moments, g, U, Ug, lineInfo, elName };
 }
 
 /** Numerische Jacobi-Matrix der Bindungen in der Bezugslage */

@@ -253,7 +253,7 @@ export const sqrt = (a) => pow(a, HALF);
 // ---------------------------------------------------------------- fn
 const FN = {
   sin: Math.sin, cos: Math.cos, tan: Math.tan, exp: Math.exp, ln: Math.log,
-  abs: Math.abs, sign: Math.sign,
+  abs: Math.abs, sign: Math.sign, asin: Math.asin, atan: Math.atan,
 };
 export function leadingNegative(a) {
   if (a.t === 'num') return numVal(a) < 0;
@@ -277,7 +277,7 @@ export function fn(name, a) {
   if (a.t === 'num') {
     const v = numVal(a);
     if (v === 0) {
-      if (name === 'sin' || name === 'tan' || name === 'abs' || name === 'sign') return ZERO;
+      if (name === 'sin' || name === 'tan' || name === 'abs' || name === 'sign' || name === 'asin' || name === 'atan') return ZERO;
       if (name === 'cos' || name === 'exp') return ONE;
     }
     if (name === 'ln' && v === 1) return ZERO;
@@ -285,10 +285,28 @@ export function fn(name, a) {
     if (name === 'sign') return num(Math.sign(v));
     if (a.f) return mkFloat(FN[name](v));
   }
-  if (name === 'sin' || name === 'tan' || name === 'cos') {
+  if (name === 'sin' || name === 'tan' || name === 'cos' || name === 'asin' || name === 'atan') {
     if (leadingNegative(a)) {
       const na = mul(MONE, a);
       return name === 'cos' ? fn('cos', na) : mul(MONE, fn(name, na));
+    }
+  }
+  // exakte Werte: arcsin(1/2) = π/6, arctan(√3/3) = π/6 …
+  if ((name === 'asin' || name === 'atan') && freeSyms(a).size === 0) {
+    let v; try { v = FN[name](evalNum(a, {})); } catch { v = NaN; }
+    const k = Math.round((v / Math.PI) * 12);
+    if (Number.isFinite(v) && k !== 0 && Math.abs(v - (k * Math.PI) / 12) < 1e-12) return mul(num(k, 12), sym('pi', { kind: 'param', latex: '\\pi', pos: true, order: 0 }));
+  }
+  // Winkelfunktion der Umkehrfunktion
+  if (a.t === 'fn' && (a.name === 'asin' || a.name === 'atan')) {
+    const x = a.arg;
+    if (a.name === 'asin') {
+      if (name === 'sin') return x;
+      if (name === 'cos') return pow(add(ONE, mul(MONE, pow(x, 2))), HALF);
+    } else {
+      if (name === 'tan') return x;
+      if (name === 'sin') return mul(x, pow(add(ONE, pow(x, 2)), num(-1, 2)));
+      if (name === 'cos') return pow(add(ONE, pow(x, 2)), num(-1, 2));
     }
   }
   if (name === 'abs' && isPositive(a)) return a;
@@ -476,6 +494,8 @@ export function diff(e, x) {
         case 'ln': r = mul(pow(a, MONE), da); break;
         case 'abs': r = mul(fn('sign', a), da); break;
         case 'sign': r = ZERO; break;
+        case 'asin': r = mul(pow(add(ONE, mul(MONE, pow(a, 2))), num(-1, 2)), da); break;
+        case 'atan': r = mul(pow(add(ONE, pow(a, 2)), MONE), da); break;
         default: throw new Error('Ableitung von ' + e.name + ' unbekannt');
       }
       break;
@@ -527,7 +547,7 @@ export function toJS(e, nm) {
       return 'Math.pow(' + b + ',' + toJS(e.exp, nm) + ')';
     }
     case 'fn': {
-      const m = { sin: 'Math.sin', cos: 'Math.cos', tan: 'Math.tan', exp: 'Math.exp', ln: 'Math.log', abs: 'Math.abs', sign: 'Math.sign' }[e.name];
+      const m = { sin: 'Math.sin', cos: 'Math.cos', tan: 'Math.tan', exp: 'Math.exp', ln: 'Math.log', abs: 'Math.abs', sign: 'Math.sign', asin: 'Math.asin', atan: 'Math.atan' }[e.name];
       return m + '(' + toJS(e.arg, nm) + ')';
     }
   }

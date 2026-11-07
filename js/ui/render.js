@@ -248,6 +248,7 @@ export function renderScene(sys, V, opts = {}) {
         case 'pin': case 'roller': {
           const B = byId.get(el.at?.el); if (!B) break;
           if (el.guide) { out.supports += g0 + drawGuide(B, el, V, env, c, sys) + '</g>'; break; }
+          if (el.track) { out.supports += g0 + drawTrack(B, el, V, env, D(B.id), c) + '</g>'; break; }
           const P = V.S(...portWorld(B, el.at.port, env, D(B.id)));
           out.supports += g0 + drawSupport(P, V.dir(el.angle ?? -90), el.type === 'roller', c) + '</g>';
           break;
@@ -255,7 +256,9 @@ export function renderScene(sys, V, opts = {}) {
         case 'hinge': {
           const A = byId.get(el.a?.el); if (!A) break;
           const P = V.S(...portWorld(A, el.a.port, env, D(A.id)));
-          out.supports += g0 + circ(P, 9, 'transparent', 1, 'transparent') + circ(P, 4, c, 1.5, '#fff') + '</g>';
+          // Gelenk an einer Punktmasse: die gefüllte Masse bleibt sichtbar
+          const atPoint = A.type === 'point' || byId.get(el.b?.el)?.type === 'point';
+          out.supports += g0 + circ(P, 9, 'transparent', 1, 'transparent') + (atPoint ? '' : circ(P, 4, c, 1.5, '#fff')) + '</g>';
           break;
         }
         case 'contact': {
@@ -344,6 +347,17 @@ export function renderScene(sys, V, opts = {}) {
   if (opts.showDofs) {
     for (const d of sys.dofs || []) {
       const B = byId.get(d.body); if (!B) continue;
+      if (d.coord === 's') {
+        // Weg entlang der Gleitbahn: Pfeil neben dem Gleitpunkt
+        const Bb = byId.get(B.at?.el); if (!Bb) continue;
+        const P = V.S(...portWorld(Bb, B.at.port, env, D(Bb.id)));
+        const t = V.dir((B.angle ?? -90) - 90), nrm = V.dir(B.angle ?? -90);
+        const cc = '#c2410c';
+        const o = add2(P, nrm, -22);
+        const a = add2(o, t, -18 * d.dir), b = add2(o, t, 18 * d.dir);
+        out.dofs += arrow(a, b, cc, 1.6) + text(b[0] + t[0] * d.dir * 12 - nrm[0] * 8, b[1] + t[1] * d.dir * 12 - nrm[1] * 8, labelSpans(d.name), { color: cc });
+        continue;
+      }
       const dd = D(B.id) || {};
       const C = V.S(B.x + (dd.u || 0), B.y + (dd.v || 0));
       const r = bodyExtent(B, env, V);
@@ -446,9 +460,33 @@ function drawRod(el, V, env, d, c) {
   const w = 4;
   const pts = [add2(e1, n, w), add2(e2, n, w), add2(e2, n, -w), add2(e1, n, -w)];
   const C = V.S(cx, cy);
-  let s = seg(e1, e2, 'transparent', 16) + poly(pts, c, 1.3, '#fff', true);
-  s += text(C[0] + n[0] * 22, C[1] + n[1] * 22, labelSpans(el.props.m) + ', ' + labelSpans(el.props.l), { color: c });
+  let s = seg(e1, e2, 'transparent', 16);
+  // masseloser Stab: einfache kräftige Linie, Beschriftung nur mit der Länge
+  if (el.massless) s += seg(e1, e2, c, 2.6);
+  else s += poly(pts, c, 1.3, '#fff', true);
+  s += text(C[0] + n[0] * 22, C[1] + n[1] * 22, el.massless ? labelSpans(el.props.l) : labelSpans(el.props.m) + ', ' + labelSpans(el.props.l), { color: c });
   s += bodyNo(el, C[0] - n[0] * 14, C[1] - n[1] * 14);
+  return s;
+}
+/** Gleitbahn: raumfeste Bahnlinie mit Schraffur und mitbewegtem Gleitstein am Anschlusspunkt */
+function drawTrack(B, el, V, env, d, c) {
+  const P0 = V.S(...portWorld(B, el.at.port, env));
+  const P = V.S(...portWorld(B, el.at.port, env, d));
+  const tdeg = (el.angle ?? -90) - 90;
+  const t = V.dir(tdeg);
+  let side = V.dir(el.angle ?? -90);
+  const C = V.S(B.x, B.y);
+  // Schraffur auf der vom Körper abgewandten Seite
+  if ((C[0] - P0[0]) * side[0] + (C[1] - P0[1]) * side[1] > 0) side = [-side[0], -side[1]];
+  if (el.flip) side = [-side[0], -side[1]];
+  const L = 58 * Math.max(0.7, Math.min(Z, 1.2));
+  const R0 = add2(P0, side, 6);
+  const a = add2(R0, t, -L), b = add2(R0, t, L);
+  let s = seg(a, b, 'transparent', 14) + seg(a, b, c, 1.6) + hatch(a, b, side, c, 8, 7);
+  // Gleitstein
+  const n = side;
+  const box = [add2(add2(P, t, -9), n, 6), add2(add2(P, t, 9), n, 6), add2(add2(P, t, 9), n, -4), add2(add2(P, t, -9), n, -4)];
+  s += poly(box, c, 1.3, '#fff', true) + circ(P, 3.5, c, 1.4, '#fff');
   return s;
 }
 /** Führungsschiene neben einem Körper (raumfest): senkrechte oder waagrechte Führung */
@@ -579,6 +617,7 @@ export function paletteIcon(tool) {
     case 'disk': return W(circ([20, 15], 11, c) + circ([20, 15], 2, c, 1.2, '#fff'));
     case 'stepdisk': return W(circ([20, 15], 12, c) + circ([20, 15], 6, c) + circ([20, 15], 1.6, c, 1, '#fff'));
     case 'rod': return W(poly([[7, 24], [33, 6], [35, 9], [9, 27]], c, 1.3, '#fff', true));
+    case 'mrod': return W(seg([8, 25], [34, 7], c, 2.6) + circ([8, 25], 2.6, c, 1.2, '#fff') + circ([34, 7], 2.6, c, 1.2, '#fff'));
     case 'point': return W(circ([20, 15], 5, c, 1.4, c));
     case 'node': return W(springPath([2, 15], [18, 15], c) + springPath([22, 15], [38, 15], c) + circ([20, 15], 3, c, 1.2, c));
     case 'ground': return W(seg([4, 14], [36, 14], c, 1.6) + hatch([4, 14], [36, 14], [0, 1], c, 6, 7));

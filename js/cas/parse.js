@@ -2,7 +2,7 @@
 import { num, sym, add, mul, pow, fn, MONE, freeSyms, info } from './expr.js';
 import { nameToLatex } from './latex.js';
 
-const FUNCS = new Set(['sin', 'cos', 'tan', 'sqrt', 'exp', 'ln', 'abs']);
+const FUNCS = new Set(['sin', 'cos', 'tan', 'sqrt', 'exp', 'ln', 'abs', 'asin', 'atan']);
 
 export function paramSym(name) {
   if (name === 't') return sym('t', { kind: 'time', latex: 't', pos: true, order: 0 });

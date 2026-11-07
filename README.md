@@ -12,6 +12,9 @@ Browser-App zum **Zeichnen, Herleiten und Simulieren ebener Mehrkörpersysteme**
    - Seile, Federn, Dämpfer, Gelenke, Drehfedern und Stäbe **in einem Zug ziehen** (Antippen–Antippen geht weiterhin).
    - Verbindungen werden automatisch **gerade bzw. tangential an Scheiben** ausgerichtet; eine noch ungelagerte Masse rutscht dabei genau unter den Rollenrand.
    - Hängt eine Masse nur an senkrechten Verbindungen, wird sie wie in Skizzen üblich **senkrecht geführt** (Panel: „Führung“ frei / senkrecht / waagrecht).
+   - **Masselose Stäbe** (eigenes Werkzeug oder Haken „masselos“ im Panel): ohne Masse und Trägheit, erscheinen nicht in den Formeln.
+   - **Gleitbahn:** vom Anschlusspunkt (z. B. Stabende) in Bahnrichtung ziehen; gezeichnet mit Bahnlinie, Schraffur und Gleitstein. Der **Weg entlang der Bahn** (z. B. x_A) ist als Freiheitsgrad wählbar.
+   - **Automatisch verbinden:** Legt man einen Körper auf ein Stabende bzw. eine Punktmasse (oder auf ein freies Feder-/Seilende), wird er per Gelenk angeschlossen. Lose übereinanderliegende Punkte meldet der Schritt „Freiheitsgrade“ mit Knopf „Verbinden“.
    - Stäbe rasten an Anschlusspunkten ein und werden dort **automatisch gelenkig** angeschlossen.
    - Beim Verschieben richten sich Körper an Anschlusspunkten anderer Elemente aus (**Hilfslinien**).
    - Schwebende Leiste am ausgewählten Element: drehen, Richtung umkehren, duplizieren, löschen.
@@ -21,7 +24,7 @@ Browser-App zum **Zeichnen, Herleiten und Simulieren ebener Mehrkörpersysteme**
 2. **Freiheitsgrade & Methode festlegen** – Lagrange 1. Art, Lagrange 2. Art oder d'Alembert-Lagrange,
    jeweils **linearisiert** (kleine Auslenkungen) oder **nichtlinear**. Freiheitsgrade (x, y, φ je Körper, mit positiver Richtung)
    werden in der Oberfläche gewählt, der Freiheitsgrad f wird automatisch geprüft.
-3. **Bewegungsgleichungen** – symbolische Herleitung mit Zwischenschritten (Kinematik, T, U, D, generalisierte Kräfte,
+3. **Bewegungsgleichungen** – nichtlineare Kinematik löst Bindungen auch nach Winkeln auf (arcsin/arctan, z. B. gleitende Stabenden); symbolische Herleitung mit Zwischenschritten (Kinematik, T, U, D, generalisierte Kräfte,
    Jacobi-Matrizen bzw. Zwangskräfte λ) und Matrizenform; als LaTeX kopierbar.
 4. **Simulation** – Anfangswerte, Zeitdiskretisierung (explizites Euler, symplektisches Euler, Heun, Runge-Kutta 4), Schrittweite;
    Animation der Zeichnung und Zeitverläufe (q, q̇, λ, Energie), CSV-Export.
@@ -56,6 +59,7 @@ python3 -m http.server 8000
 - Ebene Bewegung; Koordinaten sind Auslenkungen aus der **gezeichneten Lage** (x nach rechts, y nach oben, ϑ gegen den Uhrzeigersinn).
 - Federn sind in der gezeichneten Lage entspannt (Länge l₀), außer es ist eine abweichende „Länge in der Zeichnung“ angegeben (Vorspannung); Seile sind dehnstarr und straff.
 - Liegt ein Seil-/Federende tangential an einer Scheibe, gilt es als aufgewickelt (Abwickellänge R·ϑ).
+- Linearisiert wird um die gezeichnete Lage; sie sollte eine Gleichgewichtslage sein (konstante Lasten wie m g sind erlaubt). Liegt kein Gleichgewicht vor, kann Lagrange 1. Art (statische Zwangskräfte λ₀) von den anderen Methoden abweichen – dann „nichtlinear“ verwenden.
 - Linearisiert: Kinematik der abhängigen Koordinaten bis zur 2. Ordnung, Energien bis zur 2. Ordnung (z. B. Pendel-Rückstellung durch Gewicht);
   bei Lagrange 1. Art wird die geometrische Steifigkeit aus den statischen Zwangskräften λ₀ berücksichtigt.
 - Nichtlinear mit Lagrange 2. Art / d'Alembert müssen sich die Bindungen nach den abhängigen Koordinaten auflösen lassen;

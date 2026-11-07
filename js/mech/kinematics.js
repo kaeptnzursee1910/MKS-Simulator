@@ -1,5 +1,5 @@
 // Freiheitsgrade, Freiheitsgradanalyse und Auflösen der Bindungen (Kinematik)
-import { ratsimp, trigsimp, leadingNegative, add, mul, pow, MONE, ZERO, num, diff, subs, simplify, sqrtsimp, evalNum, has, hasAny, freeSyms, series, isZero, expand, sqrt } from '../cas/expr.js';
+import { ratsimp, trigsimp, leadingNegative, add, mul, pow, MONE, ZERO, num, diff, subs, simplify, sqrtsimp, evalNum, has, hasAny, freeSyms, series, isZero, expand, sqrt, sym, fn } from '../cas/expr.js';
 import { nameToLatex } from '../cas/latex.js';
 import { makeCoord } from './model.js';
 import { rank, gaussSolve, makeTestEnvs, numericallyZero, independentRows } from './linalg.js';
@@ -12,11 +12,18 @@ export function setupDofs(model, sys) {
   const absToQ = new Map(); // abs name -> {k, sign}
   const seen = new Set();
   (sys.dofs || []).forEach((d, i) => {
-    const b = model.bodyOf.get(d.body);
-    if (!b) throw new Error('Freiheitsgrad „' + d.name + '“ gehört zu keinem Körper mehr.');
-    const abs = d.coord === 'x' ? b.X : d.coord === 'y' ? b.Y : b.TH;
-    if (!abs) throw new Error('Körper ' + b.label + ' ist nicht drehbar – φ kann kein Freiheitsgrad sein.');
-    if (seen.has(abs.name)) throw new Error('Koordinate doppelt als Freiheitsgrad gewählt (Körper ' + b.label + ').');
+    let abs, blabel = '?';
+    if (d.coord === 's') {
+      abs = model.trackCoords?.get(d.body);
+      if (!abs) throw new Error('Freiheitsgrad „' + d.name + '“ gehört zu keiner Gleitbahn mehr.');
+    } else {
+      const b = model.bodyOf.get(d.body);
+      if (!b) throw new Error('Freiheitsgrad „' + d.name + '“ gehört zu keinem Körper mehr.');
+      abs = d.coord === 'x' ? b.X : d.coord === 'y' ? b.Y : b.TH;
+      blabel = b.label;
+    }
+    if (!abs) throw new Error('Körper ' + blabel + ' ist nicht drehbar – φ kann kein Freiheitsgrad sein.');
+    if (seen.has(abs.name)) throw new Error('Koordinate doppelt als Freiheitsgrad gewählt (Körper ' + blabel + ').');
     seen.add(abs.name);
     const q = makeCoord('q' + (i + 1), nameToLatex(d.name || 'q_' + (i + 1)), 1000 + i);
     q.dof = d;
@@ -153,6 +160,9 @@ function solveFor(e, z, refEnv, envs) {
     const rest = simplify(subs(e, new Map([[z.name, ZERO]])));
     return simplify(mul(MONE, rest, pow(a, MONE)));
   }
+  // Winkel aus  A·cos z + B·sin z + C = 0  (z. B. gleitendes Stabende) → arcsin/arctan
+  const tr = solveTrig(e, z, refEnv);
+  if (tr) return tr;
   // Wurzel isolieren: e = C*sqrt(X) + R
   const S = findSqrt(e, z);
   if (S) {
@@ -171,6 +181,37 @@ function solveFor(e, z, refEnv, envs) {
     }
   }
   return quadRoots(e, z, refEnv, envs);
+}
+/** sin z, cos z durch Hilfssymbole ersetzen */
+function replaceTrig(x, z, S, C) {
+  switch (x.t) {
+    case 'fn':
+      if (x.arg.key === z.key && x.name === 'sin') return S;
+      if (x.arg.key === z.key && x.name === 'cos') return C;
+      return fn(x.name, replaceTrig(x.arg, z, S, C));
+    case 'add': return add(...x.terms.map((t) => replaceTrig(t, z, S, C)));
+    case 'mul': return mul(...x.factors.map((t) => replaceTrig(t, z, S, C)));
+    case 'pow': return pow(replaceTrig(x.base, z, S, C), replaceTrig(x.exp, z, S, C));
+    default: return x;
+  }
+}
+/** A·cos z + B·sin z + C = 0 nach z auflösen; Zweig so, dass z in der gezeichneten Lage 0 ist */
+function solveTrig(e, z, refEnv) {
+  const S = sym('__trigS'), C = sym('__trigC');
+  const f = expand(replaceTrig(e, z, S, C));
+  if (has(f, z)) return null;
+  let A = simplify(diff(f, C)), B = simplify(diff(f, S));
+  if (hasAny(A, [S.name, C.name]) || hasAny(B, [S.name, C.name])) return null;
+  let R = simplify(subs(f, new Map([[S.name, ZERO], [C.name, ZERO]])));
+  let B0;
+  try { B0 = evalNum(B, refEnv); } catch { return null; }
+  if (!Number.isFinite(B0) || Math.abs(B0) < 1e-12) return null; // nur cos z: Zweig nicht eindeutig
+  if (B0 < 0) { A = simplify(mul(MONE, A)); B = simplify(mul(MONE, B)); R = simplify(mul(MONE, R)); }
+  const r = isZero(A)
+    ? fn('asin', simplify(mul(MONE, R, pow(B, MONE))))
+    : add(fn('asin', simplify(mul(MONE, R, pow(add(pow(A, 2), pow(B, 2)), num(-1, 2))))), mul(MONE, fn('atan', simplify(mul(A, pow(B, MONE))))));
+  try { if (Math.abs(evalNum(r, refEnv)) > 1e-6) return null; } catch { return null; }
+  return r;
 }
 function solveLinear(e, z, refEnv) {
   const a = simplify(diff(e, z));

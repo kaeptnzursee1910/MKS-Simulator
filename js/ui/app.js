@@ -166,22 +166,23 @@ function nextIndex(prefix) {
 // ------------------------------------------------------------ Palette
 const TOOLS = [
   ['Bearbeiten', [['select', 'Auswahl'], ['delete', 'Löschen']]],
-  ['Körper', [['block', 'Klotz'], ['disk', 'Scheibe'], ['stepdisk', 'Stufen­rolle'], ['rod', 'Stab'], ['point', 'Punkt­masse']]],
+  ['Körper', [['block', 'Klotz'], ['disk', 'Scheibe'], ['stepdisk', 'Stufen­rolle'], ['rod', 'Stab'], ['mrod', 'Stab masse­los'], ['point', 'Punkt­masse']]],
   ['Umgebung', [['ground', 'Boden'], ['curve', 'Kreis­bahn'], ['fix', 'Fest­punkt']]],
-  ['Lager', [['pin', 'Fest­lager'], ['roller', 'Los­lager'], ['hinge', 'Gelenk'], ['roll', 'Rollen'], ['slide', 'Gleiten']]],
+  ['Lager', [['pin', 'Fest­lager'], ['roller', 'Los­lager'], ['track', 'Gleit­bahn'], ['hinge', 'Gelenk'], ['roll', 'Rollen'], ['slide', 'Gleiten']]],
   ['Verbinder', [['rope', 'Seil'], ['spring', 'Feder'], ['damper', 'Dämpfer'], ['springdamper', 'Feder ∥ Dämpfer'], ['node', 'Knoten'], ['tspring', 'Dreh­feder'], ['tdamper', 'Dreh­dämpfer']]],
   ['Lasten', [['force', 'Kraft'], ['moment', 'Moment']]],
 ];
-const PORT_TOOLS = new Set(['pin', 'roller', 'hinge', 'rope', 'spring', 'damper', 'springdamper', 'force', 'rod']);
+const PORT_TOOLS = new Set(['pin', 'roller', 'track', 'hinge', 'rope', 'spring', 'damper', 'springdamper', 'force', 'rod', 'mrod']);
 const LINE_TOOLS = new Set(['rope', 'spring', 'damper', 'springdamper']);
 /** Werkzeuge, die zwei Punkte verbinden: Antippen–Antippen oder in einem Zug ziehen */
-const CONNECT_TOOLS = new Set([...LINE_TOOLS, 'hinge', 'tspring', 'tdamper', 'rod']);
+const CONNECT_TOOLS = new Set([...LINE_TOOLS, 'hinge', 'tspring', 'tdamper', 'rod', 'mrod', 'track']);
 const HINTS = {
   select: 'Element antippen zum Bearbeiten, Körper ziehen zum Verschieben (richtet sich an anderen Punkten aus), Leerfläche ziehen verschiebt die Ansicht.',
   delete: 'Element antippen, um es zu löschen.',
   block: 'Auf die Zeichenfläche tippen, um einen Klotz zu platzieren.',
   disk: 'Auf die Zeichenfläche tippen, um eine Scheibe zu platzieren.',
   stepdisk: 'Auf die Zeichenfläche tippen, um eine Stufenrolle (zwei Radien) zu platzieren.',
+  mrod: 'Masselosen Stab vom Anfangs- zum Endpunkt ziehen (oder beide antippen). Er hat keine Masse und keine Trägheit; an Anschlusspunkten wird er gelenkig angeschlossen.',
   rod: 'Stab vom Anfangs- zum Endpunkt ziehen (oder beide antippen), Winkel in 15°-Schritten. An Anschlusspunkten wird er gelenkig angeschlossen.',
   point: 'Auf die Zeichenfläche tippen, um eine Punktmasse zu platzieren.',
   ground: 'Auf die Zeichenfläche tippen, um einen Boden (Bahn) zu platzieren.',
@@ -189,6 +190,7 @@ const HINTS = {
   fix: 'Auf freie Fläche (Wand) oder auf ein freies Seil-/Federende tippen.',
   pin: 'Anschlusspunkt eines Körpers oder freies Seil-/Federende antippen → Festlager.',
   roller: 'Blauen Anschlusspunkt antippen → Loslager (Richtung danach im Panel einstellen).',
+  track: 'Vom Anschlusspunkt (z. B. Stabende) in Richtung der Bahn ziehen → Gleitbahn. Antippen erzeugt eine waagrechte Bahn.',
   hinge: 'Vom Anschlusspunkt des ersten Körpers zum zweiten Körper ziehen (oder beide antippen).',
   roll: 'Scheibe antippen → rollt ohne Gleiten auf dem nächsten Boden bzw. der nächsten Kreisbahn.',
   slide: 'Körper antippen → gleitet reibungsfrei auf dem nächsten Boden bzw. der nächsten Kreisbahn.',
@@ -270,6 +272,7 @@ function draw() {
     opts.preview = [el ? portWorld(el, a.port, opts.env) : [a.x, a.y], state.pointerW];
   }
   if (state.pending?.kind === 'rod' && state.pointerW) opts.preview = [state.pending.p, state.pointerW];
+  if (state.pending?.kind === 'track' && state.pointerW) { const A = byId(state.pending.a.el); if (A) opts.preview = [portWorld(A, state.pending.a.port, opts.env), state.pointerW]; }
   if (state.pending?.kind === 'hinge' && state.pointerW) { const A = byId(state.pending.a.el); if (A) opts.preview = [portWorld(A, state.pending.a.port, opts.env), state.pointerW]; }
   if (state.pending?.kind === 'torsion' && state.pointerW) { const A = byId(state.pending.a); if (A) opts.preview = [portWorld(A, state.pending.port || 'c', opts.env), state.pointerW]; }
   opts.guides = state.guides;
@@ -450,6 +453,117 @@ function supportFreeEnd(fe, style) {
 }
 
 // ------------------------------------------------------------ Ausrichten, Geradeziehen, Führung
+/** Stab masselos machen (Masse/Trägheit entfernen) bzw. wieder mit Masse versehen */
+function setMassless(el, on) {
+  if (on) {
+    if (el.props.m !== undefined) el.massBackup = { m: el.props.m, J: el.props.J };
+    delete el.props.m; delete el.props.J;
+    el.massless = true;
+  } else {
+    const i = el.label;
+    const bk = el.massBackup || { m: `m_${i}`, J: `m_${i}*(${el.props.l})^2/12` };
+    el.props = { m: bk.m, l: el.props.l, J: bk.J };
+    delete el.massless; delete el.massBackup;
+  }
+}
+// ---- Automatisch verbinden: übereinanderliegende Anschlusspunkte
+const JOIN_TOL = 0.004;
+/** Stabenden und Punktmassen sind Gelenkpunkte – nur daran wird automatisch verbunden */
+const isJoinPort = (el, pid) => el.type === 'point' || (el.type === 'rod' && (pid === 'e1' || pid === 'e2'));
+const portW = (el, p) => [el.x + p.w[0], el.y + p.w[1]];
+/** Körper, die über Gelenke genau an der Stelle w zusammenhängen */
+function jointCluster(bodyId, w) {
+  const e = env(), cl = new Set([bodyId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const h of state.sys.elements) {
+      if (h.type !== 'hinge') continue;
+      const A = byId(h.a?.el), B = byId(h.b?.el);
+      if (!A || !B) continue;
+      const pa = portWorld(A, h.a.port, e);
+      if (Math.hypot(pa[0] - w[0], pa[1] - w[1]) > JOIN_TOL) continue;
+      if (cl.has(A.id) !== cl.has(B.id)) { cl.add(A.id); cl.add(B.id); grew = true; }
+    }
+  }
+  return cl;
+}
+const pinnedAt = (bodyId, w) => state.sys.elements.some((x) => x.type === 'pin' && x.at?.el === bodyId && (() => { const p = portWorld(byId(bodyId), x.at.port, env()); return Math.hypot(p[0] - w[0], p[1] - w[1]) < JOIN_TOL; })());
+/** übereinanderliegende, noch nicht verbundene Punktpaare (für Körper X oder alle) */
+function coincidences(X = null) {
+  const e = env(), bs = bodies(), out = [];
+  const portsOf = (b) => ports(b, e).filter((p) => !(b.type === 'rod' && (p.id === 'q1' || p.id === 'q2')));
+  for (const A of X ? [X] : bs) for (const pa of portsOf(A)) {
+    const wa = portW(A, pa);
+    for (const B of bs) {
+      if (B === A || (!X && bs.indexOf(B) < bs.indexOf(A))) continue;
+      for (const pb of portsOf(B)) {
+        if (!isJoinPort(A, pa.id) && !isJoinPort(B, pb.id)) continue;
+        const wb = portW(B, pb);
+        if (Math.hypot(wa[0] - wb[0], wa[1] - wb[1]) > JOIN_TOL) continue;
+        if (jointCluster(A.id, wa).has(B.id) || (pinnedAt(A.id, wa) && pinnedAt(B.id, wa))) break;
+        out.push({ A, pa: pa.id, B, pb: pb.id, w: wa });
+        break;
+      }
+    }
+  }
+  return out;
+}
+/** Gelenke für übereinanderliegende Punkte anlegen, freie Linienenden anschließen; liefert Beschreibungen */
+function joinCoincident(list) {
+  const done = [];
+  for (const c of list) {
+    if (jointCluster(c.A.id, c.w).has(c.B.id)) continue;
+    if (pinnedAt(c.A.id, c.w) && pinnedAt(c.B.id, c.w)) continue;
+    state.sys.elements.push({ id: newId('h'), type: 'hinge', a: { el: c.A.id, port: c.pa }, b: { el: c.B.id, port: c.pb } });
+    done.push(bodyName(c.A) + ' – ' + bodyName(c.B));
+  }
+  return done;
+}
+function autoJoin(X) {
+  const done = joinCoincident(coincidences(X));
+  // freie Seil-/Feder-/Dämpferenden auf einem Anschlusspunkt von X anschließen
+  const e = env();
+  for (const l of state.sys.elements) {
+    if (!isLine(l)) continue;
+    for (const k of ['a', 'b']) {
+      const r = l[k];
+      if (!r || r.el || !Number.isFinite(r.x)) continue;
+      const other = l[k === 'a' ? 'b' : 'a'];
+      for (const p of ports(X, e)) {
+        const w = portW(X, p);
+        if (Math.hypot(w[0] - r.x, w[1] - r.y) > JOIN_TOL || other?.el === X.id) continue;
+        l[k] = { el: X.id, port: p.id };
+        done.push(bodyName(X) + ' – ' + TYPES[l.type].name.split(' ')[0]);
+        break;
+      }
+    }
+  }
+  if (done.length) toast('Automatisch verbunden: ' + done.join(', ') + '.');
+  return done.length;
+}
+
+/** Gleitbahn (Loslager mit sichtbarer Bahn) an einem Anschlusspunkt; deg = Bahnrichtung */
+function createTrack(p, deg) {
+  const B = byId(p.el);
+  const gd = guideOf(B);
+  if (gd?.auto) setGuide(B, 'none');
+  let a = deg + 90; if (a > 180) a -= 360;
+  const el = { id: newId('s'), type: 'roller', track: true, at: p, angle: a };
+  state.sys.elements.push(el);
+  return el;
+}
+/** Bahnrichtung in Grad (−180, 180] */
+function trackDeg(el) { let d = ((((el.angle ?? -90) - 90) % 360) + 360) % 360; if (d > 180) d -= 360; return d; }
+const tracks = () => state.sys.elements.filter((x) => x.type === 'roller' && x.track);
+const ARROWS = { 0: '→', 45: '↗', 90: '↑', 135: '↖', 180: '←', '-180': '←', '-135': '↙', '-90': '↓', '-45': '↘' };
+const arrowFor = (deg) => { let d = Math.round(deg / 45) * 45; d = ((d % 360) + 360) % 360; if (d > 180) d -= 360; return ARROWS[d] || '→'; };
+function trackLabel(el) {
+  const B = byId(el.at?.el);
+  const i = tracks().indexOf(el) + 1;
+  const end = { e1: 'Ende 1', e2: 'Ende 2', c: 'Mitte' }[el.at?.port] || el.at?.port;
+  return `Gleitbahn ${i}` + (B ? ` (${bodyName(B)}, ${end})` : '');
+}
 /** Befestigungspunkt einer Drehfeder am Körper: bei Stäben das nächstgelegene Ende bzw. die Mitte */
 function torsionPort(b, w) {
   if (b.type !== 'rod' && b.type !== 'block') return 'c';
@@ -727,7 +841,7 @@ function tap(sx, sy, target) {
   switch (t) {
     case 'select': state.sel = elG ? elG.dataset.id : null; break;
     case 'delete': if (elG) deleteElement(elG.dataset.id); return;
-    case 'rod': {
+    case 'rod': case 'mrod': {
       // Stabenden rasten an Anschlusspunkten anderer Körper ein und werden dort gelenkig angeschlossen
       const pp = portAt(sx, sy, 18, isBody);
       const pw = pp ? portWorld(byId(pp.el), pp.port, env()) : ws;
@@ -740,6 +854,7 @@ function tap(sx, sy, target) {
       else ang = Math.round((Math.atan2(pw[1] - p0[1], pw[0] - p0[0]) * 180) / Math.PI / 15) * 15;
       L = pp ? Math.max(0.05, round3(L)) : Math.max(0.05, Math.round(L / 0.05) * 0.05);
       const el = createBody('rod', p0);
+      if (t === 'mrod') setMassless(el, true);
       const a = (ang * Math.PI) / 180;
       el.angle = ang;
       el.x = round6(p0[0] + (L / 2) * Math.cos(a));
@@ -753,7 +868,7 @@ function tap(sx, sy, target) {
         const a = portWorld(el, endId, e1), b = portWorld(byId(ref.el), ref.port, e1);
         if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.004) { state.sys.elements.push({ id: newId('h'), type: 'hinge', a: { el: el.id, port: endId }, b: ref }); joined++; }
       }
-      if (joined) toast('Stab ' + el.label + ' gelenkig angeschlossen' + (joined > 1 ? ' (beide Enden).' : '.'));
+      if (!autoJoin(el) && joined) toast('Stab ' + el.label + ' gelenkig angeschlossen' + (joined > 1 ? ' (beide Enden).' : '.'));
       state.sel = el.id; setTool('select');
       break;
     }
@@ -767,6 +882,7 @@ function tap(sx, sy, target) {
     case 'block': case 'disk': case 'stepdisk': case 'point': {
       const el = createBody(t, ws);
       alignElement(el, new Set([el.id]), 12);
+      autoJoin(el);
       state.sel = el.id; setTool('select');
       break;
     }
@@ -809,6 +925,24 @@ function tap(sx, sy, target) {
       if (gd?.auto) setGuide(B, 'none');
       const el = { id: newId('s'), type: t, at: p, angle: ang };
       state.sys.elements.push(el); state.sel = el.id;
+      break;
+    }
+    case 'track': {
+      // Gleitbahn: Richtung aus dem Ziehen (15°-Raster), Antippen → waagrecht
+      if (state.pending?.kind === 'track') {
+        const a = state.pending.a;
+        state.pending = null;
+        const B = byId(a.el), P = portWorld(B, a.port, env());
+        const S0 = V.S(...P);
+        let deg = 0;
+        if (Math.hypot(sx - S0[0], sy - S0[1]) > 12) deg = Math.round((Math.atan2(w[1] - P[1], w[0] - P[0]) * 180) / Math.PI / 15) * 15;
+        state.sel = createTrack(a, deg).id;
+        break;
+      }
+      const p = portAt(sx, sy, 20, isBody);
+      if (!p) { toast('Bitte einen blauen Anschlusspunkt eines Körpers antippen (z. B. ein Stabende).'); return; }
+      if (dragStart) { state.pending = { kind: 'track', a: p }; state.pointerW = w; updateHint(); draw(); return; }
+      state.sel = createTrack(p, 0).id;
       break;
     }
     case 'hinge': {
@@ -901,6 +1035,7 @@ function tap(sx, sy, target) {
 
 // ------------------------------------------------------------ Zeiger (Maus/Touch)
 const pointers = new Map();
+let dragStart = false; // true, solange der Startpunkt eines Zieh-Vorgangs verarbeitet wird
 let gesture = null;
 svg.addEventListener('pointerdown', (e) => {
   svg.setPointerCapture(e.pointerId);
@@ -927,7 +1062,8 @@ svg.addEventListener('pointerdown', (e) => {
   if (state.step === 'model' && CONNECT_TOOLS.has(state.tool) && !state.pending) {
     if (state.tool === 'tspring' || state.tool === 'tdamper') { const bb = bodyAt(e.target, sx, sy); connect = !!(bb && hasRotation(bb)); }
     else if (state.tool === 'hinge') connect = !!portAt(sx, sy, 20, isBody);
-    else if (state.tool === 'rod') connect = true;
+    else if (state.tool === 'rod' || state.tool === 'mrod') connect = true;
+    else if (state.tool === 'track') connect = !!portAt(sx, sy, 20, isBody);
     else connect = !!(portAt(sx, sy, 18) || freeEndAt(sx, sy));
   }
   gesture = { kind: 'down', sx, sy, target: e.target, el: draggable ? el : null, ox: el?.x, oy: el?.y, grp, view0: { ...state.view }, moved: false, connect };
@@ -971,7 +1107,8 @@ svg.addEventListener('pointermove', (e) => {
       // Verbinden in einem Zug: Startpunkt beim Drücken, Endpunkt beim Loslassen
       if (!gesture.started) {
         gesture.started = true;
-        if (!state.pending) tap(gesture.sx, gesture.sy, gesture.target);
+        dragStart = true;
+        try { if (!state.pending) tap(gesture.sx, gesture.sy, gesture.target); } finally { dragStart = false; }
         if (!state.pending) { gesture.connect = false; gesture.dead = true; return; }
       }
       state.pointerW = V.toWorld(sx, sy);
@@ -1032,7 +1169,10 @@ function endPointer(e) {
       return;
     }
     if (!g.moved) tap(g.sx, g.sy, g.target);
-    else if (g.el) { changed(); renderPanel(); }
+    else if (g.el) {
+      if (isBody(g.el)) for (const id of hingeGroup(g.el.id)) autoJoin(byId(id));
+      changed(); renderPanel();
+    }
     else save();
   }
 }
@@ -1178,7 +1318,7 @@ function panelModel() {
   let h = '';
   if (el) {
     const t = TYPES[el.type];
-    h += `<h2>${el.guide ? 'Führung' : esc(t.name)}${el.label ? ' ' + esc(el.label) : ''}</h2><div class="card" id="el-props">`;
+    h += `<h2>${el.track ? 'Gleitbahn' : el.guide ? 'Führung' : esc(t.name)}${el.label ? ' ' + esc(el.label) : ''}</h2><div class="card" id="el-props">`;
     if (isBody(el)) h += field('Bezeichnung', 'label', el.label);
     switch (el.type) {
       case 'block':
@@ -1191,7 +1331,10 @@ function panelModel() {
         h += '<p class="muted">Innenradius leer lassen für eine einfache Scheibe. Beispiele: <code>2*r</code>, <code>m*r^2/2</code>.</p>';
         break;
       case 'rod':
-        h += exprField('Masse m', 'm', el) + exprField('Länge l', 'l', el) + exprField('Trägheit J<sub>S</sub>', 'J', el) + angleField('Winkel' + unitTag('°'), el);
+        h += `<div class="field"><label>masselos</label><label class="row"><input type="checkbox" data-massless ${el.massless ? 'checked' : ''}> keine Masse, keine Trägheit</label></div>`;
+        if (el.massless) h += exprField('Länge l', 'l', el) + angleField('Winkel' + unitTag('°'), el);
+        else h += exprField('Masse m', 'm', el) + exprField('Länge l', 'l', el) + exprField('Trägheit J<sub>S</sub>', 'J', el) + angleField('Winkel' + unitTag('°'), el);
+        if (el.massless) h += '<p class="muted">Masseloser Stab: geht nur über seine Geometrie (Länge, Gelenke) in die Kinematik ein; m und J erscheinen nicht in den Formeln.</p>';
         break;
       case 'point': h += exprField('Masse m', 'm', el); break;
       case 'ground': h += angleField('Neigung' + unitTag('°'), el) + field('Länge (Zeichnung)' + unitTag('m'), 'len', el.len, { type: 'number', attrs: 'step="0.1" min="0.1"' }); break;
@@ -1208,6 +1351,12 @@ function panelModel() {
         break;
       case 'pin': h += angleField('Richtung' + unitTag('°'), el) + '<p class="muted">Festlager: Punkt unverschieblich, Drehung frei.</p>'; break;
       case 'roller':
+        if (el.track) {
+          h += `<div class="field"><label>Bahnrichtung${unitTag('°')}</label><div class="row"><input type="number" step="15" data-tdir value="${trackDeg(el)}" style="width:90px" class="inp"><button class="btn small" data-rot="-15">↻ 15°</button><button class="btn small" data-rot="15">↺ 15°</button></div></div>`;
+          h += `<div class="field"><label>Schraffur</label><button class="btn small" data-tflip>Seite wechseln</button></div>`;
+          h += '<p class="muted">Gleitbahn: Der Anschlusspunkt gleitet reibungsfrei entlang der Bahn, quer dazu ist er gesperrt. Den Weg entlang der Bahn (z. B. x<sub>A</sub>) kann man unter „Freiheitsgrade“ als Koordinate wählen.</p>';
+          break;
+        }
         if (el.guide) {
           const B = byId(el.at?.el);
           h += `<div class="field"><label>Richtung</label><div class="seg"><button data-gdir="v" class="${Math.abs(Math.sin(((el.angle ?? -90) * Math.PI) / 180)) < 0.5 ? 'on' : ''}">↕ senkrecht</button><button data-gdir="h" class="${Math.abs(Math.sin(((el.angle ?? -90) * Math.PI) / 180)) >= 0.5 ? 'on' : ''}">↔ waagrecht</button></div></div>`;
@@ -1341,6 +1490,9 @@ function bindModelPanel(el) {
   panel.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => { el.mode = b.dataset.mode; changed(); panelModel(); }));
   panel.querySelectorAll('[data-mdir]').forEach((b) => b.addEventListener('click', () => { el.dir = Number(b.dataset.mdir); changed(); panelModel(); }));
   panel.querySelector('[data-del]')?.addEventListener('click', () => deleteElement(el.id));
+  panel.querySelector('[data-tdir]')?.addEventListener('input', (e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) { let a = v + 90; if (a > 180) a -= 360; el.angle = a; changed({ typing: true }); } });
+  panel.querySelector('[data-tflip]')?.addEventListener('click', () => { el.flip = !el.flip; changed(); panelModel(); });
+  panel.querySelector('[data-massless]')?.addEventListener('change', (e) => { setMassless(el, e.target.checked); changed(); panelModel(); });
   panel.querySelectorAll('[data-tport]').forEach((b) => b.addEventListener('click', () => { if (b.dataset.tport === 'c') delete el.port; else el.port = b.dataset.tport; changed(); panelModel(); }));
   panel.querySelectorAll('[data-guide]').forEach((b) => b.addEventListener('click', () => { setGuide(el, b.dataset.guide); changed(); panelModel(); }));
   panel.querySelectorAll('[data-gdir]').forEach((b) => b.addEventListener('click', () => { el.angle = b.dataset.gdir === 'v' ? 180 : -90; el.auto = false; changed(); panelModel(); }));
@@ -1396,6 +1548,7 @@ function updateSelTools() {
   if (ROTATABLE.has(el.type)) h += '<button data-st="rot+" title="15° gegen den Uhrzeigersinn drehen">↺</button><button data-st="rot-" title="15° im Uhrzeigersinn drehen">↻</button>';
   if (el.type === 'moment') h += '<button data-st="mdir" title="Drehsinn umkehren">⇄</button>';
   if (el.type === 'force') h += '<button data-st="flip" title="Richtung umkehren">⇄</button>';
+  if (el.track) h += '<button data-st="tflip" title="Schraffur auf die andere Seite">⇅</button>';
   if (DUPLICABLE.has(el.type)) h += '<button data-st="dup" title="Duplizieren (Strg+D)">⧉</button>';
   h += '<button data-st="del" class="danger" title="Löschen (Entf)">🗑</button>';
   box.innerHTML = h;
@@ -1415,6 +1568,7 @@ $('#seltools').addEventListener('click', (e) => {
     case 'rot+': rotateBy(el, 15); break;
     case 'rot-': rotateBy(el, -15); break;
     case 'flip': rotateBy(el, 180); break;
+    case 'tflip': el.flip = !el.flip; changed(); renderPanel(); break;
     case 'mdir': el.dir = el.dir === -1 ? 1 : -1; changed(); renderPanel(); break;
     case 'dup': duplicateSelected(); break;
     case 'del': deleteElement(el.id); break;
@@ -1453,12 +1607,17 @@ function panelDof() {
     h += `<div class="muted">n = ${analysis.n} Lagekoordinaten, r = ${analysis.rank} unabhängige Bindungen ⇒ <b style="color:var(--ink)">f = ${analysis.f}</b></div>`;
     if (buildErr) h += `<div class="msg error">${mathText(buildErr)}</div>`;
     for (const m of analysis.messages) h += `<div class="msg ${m.type}">${mathText(m.text)}</div>`;
+    const loose = coincidences();
+    if (loose.length) {
+      h += `<div class="msg warn">${esc(loose.map((c) => bodyName(c.A) + ' und ' + bodyName(c.B)).join(', '))} liegen übereinander, sind aber nicht verbunden – dadurch entstehen zusätzliche Freiheitsgrade. <button class="btn small" data-joinall>Verbinden</button></div>`;
+    }
   }
   for (const d of sys.dofs) {
     const b = byId(d.body);
-    const dirOpts = d.coord === 'phi' ? [[-1, '↻ im Uhrzeigersinn'], [1, '↺ gegen Uhrzeigersinn']] : d.coord === 'x' ? [[1, '→ nach rechts'], [-1, '← nach links']] : [[1, '↑ nach oben'], [-1, '↓ nach unten']];
+    const dirOpts = d.coord === 's' ? [[1, arrowFor(trackDeg(b || {})) + ' in Bahnrichtung'], [-1, arrowFor(trackDeg(b || {}) + 180) + ' entgegen']]
+      : d.coord === 'phi' ? [[-1, '↻ im Uhrzeigersinn'], [1, '↺ gegen Uhrzeigersinn']] : d.coord === 'x' ? [[1, '→ nach rechts'], [-1, '← nach links']] : [[1, '↑ nach oben'], [-1, '↓ nach unten']];
     h += `<div class="dof-item" data-dof="${d.id}"><div>
-      <div class="row"><span class="dof-title">${katexStr(nameTex(d.name))}</span><span class="muted">${d.coord === 'phi' ? (b?.type === 'point' ? 'Bahnwinkel' : 'Drehwinkel') : d.coord + '-Verschiebung'} von Körper ${esc(b?.label ?? '?')}</span></div>
+      <div class="row"><span class="dof-title">${katexStr(nameTex(d.name))}</span><span class="muted">${d.coord === 's' ? 'Weg entlang ' + esc(b ? trackLabel(b) : 'Gleitbahn') : (d.coord === 'phi' ? (b?.type === 'point' ? 'Bahnwinkel' : 'Drehwinkel') : d.coord + '-Verschiebung') + ' von Körper ' + esc(b?.label ?? '?')}</span></div>
       <div class="row" style="margin-top:6px"><input class="inp" style="width:110px" data-dname value="${esc(d.name)}" title="Name, z. B. phi_1, x, s">
       <div class="seg">${dirOpts.map(([v, t]) => `<button data-ddir="${v}" class="${d.dir === v ? 'on' : ''}">${t}</button>`).join('')}</div></div></div>
       <button class="btn small danger" data-drem title="Entfernen">×</button></div>`;
@@ -1474,6 +1633,14 @@ function panelDof() {
   }
   if (!bodies().length) h += '<p class="muted">Noch keine Körper im Modell.</p>';
   h += '</div>';
+  if (tracks().length) {
+    h += '<h3>Gleitpunkte</h3><div class="card">';
+    for (const tr of tracks()) {
+      const on = sys.dofs.some((d) => d.body === tr.id && d.coord === 's');
+      h += `<div class="body-row ${state.sel === tr.id ? 'sel' : ''}" data-track="${tr.id}"><span class="bname">${esc(trackLabel(tr))}</span><button class="chip ${on ? 'on' : ''}" data-tadd title="Weg entlang der Bahn als Freiheitsgrad">s ${arrowFor(trackDeg(tr))}</button></div>`;
+    }
+    h += '<p class="muted">Weg des Gleitpunkts entlang seiner Bahn, z. B. x<sub>A</sub> für ein waagrecht gleitendes Stabende.</p></div>';
+  }
   h += `<button class="btn primary block" data-derive ${analysis?.ok ? '' : 'disabled'}>Bewegungsgleichungen herleiten →</button>`;
   panel.innerHTML = h;
 
@@ -1487,6 +1654,12 @@ function panelDof() {
   });
   panel.querySelectorAll('[data-body]').forEach((row) => {
     row.querySelectorAll('[data-add]').forEach((b) => b.addEventListener('click', () => toggleDof(row.dataset.body, b.dataset.add)));
+  });
+  panel.querySelectorAll('[data-track]').forEach((row) => row.querySelector('[data-tadd]').addEventListener('click', () => toggleDof(row.dataset.track, 's')));
+  panel.querySelector('[data-joinall]')?.addEventListener('click', () => {
+    const done = joinCoincident(coincidences());
+    if (done.length) toast('Verbunden: ' + done.join(', ') + '.');
+    changed(); panelDof();
   });
   panel.querySelector('[data-suggest]')?.addEventListener('click', () => {
     try {
@@ -1506,10 +1679,15 @@ function panelDof() {
 function addDof(bodyId, coord) {
   const b = byId(bodyId);
   const used = new Set(state.sys.dofs.map((d) => d.name));
-  let name = (coord === 'phi' ? 'phi' : coord) + '_' + b.label;
+  let name;
+  if (coord === 's') {
+    const td = trackDeg(b);
+    const base = td === 0 || td === 180 ? 'x' : Math.abs(td) === 90 ? 'y' : 's';
+    name = base + '_' + (tracks().indexOf(b) + 1);
+  } else name = (coord === 'phi' ? 'phi' : coord) + '_' + b.label;
   if (used.has(name)) name += 'b';
   let i = 1; while (state.sys.dofs.some((d) => d.id === 'q' + i)) i++;
-  state.sys.dofs.push({ id: 'q' + i, body: bodyId, coord, dir: coord === 'phi' ? -1 : coord === 'y' ? -1 : 1, name });
+  state.sys.dofs.push({ id: 'q' + i, body: bodyId, coord, dir: coord === 'phi' ? -1 : coord === 'y' ? -1 : coord === 's' && trackDeg(b) === 180 ? -1 : 1, name });
 }
 function toggleDof(bodyId, coord) {
   const ex = state.sys.dofs.find((d) => d.body === bodyId && d.coord === coord);
@@ -1689,6 +1867,9 @@ function runSim() {
   } catch (e) {
     console.error(e);
     state.simError = e.message;
+    if (/Singul/.test(e.message) && state.sys.elements.some((x) => x.massless)) {
+      state.simError += ' – Das System enthält masselose Stäbe: Jeder Freiheitsgrad braucht Masse bzw. Trägheit (z. B. eine Punktmasse am Stabende), sonst ist die Massenmatrix singulär und nur die statische Gleichung gilt.';
+    }
     state.simOut = null;
   }
   panelSim();
