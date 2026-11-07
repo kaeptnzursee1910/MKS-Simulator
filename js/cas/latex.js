@@ -70,7 +70,7 @@ function symTex(name) { return info(name).latex; }
 function wrap(s) { return '\\left(' + s + '\\right)'; }
 
 function fnTex(e, exponent) {
-  const names = { sin: '\\sin', cos: '\\cos', tan: '\\tan', ln: '\\ln', exp: '\\exp', sign: '\\operatorname{sgn}' };
+  const names = { sin: '\\sin', cos: '\\cos', tan: '\\tan', ln: '\\ln', exp: '\\exp', sign: '\\operatorname{sgn}', asin: '\\arcsin', atan: '\\arctan' };
   if (e.name === 'abs') return '\\left|' + tex(e.arg) + '\\right|' + (exponent ? '^{' + exponent + '}' : '');
   const head = names[e.name] + (exponent ? '^{' + exponent + '}' : '');
   const a = e.arg;

@@ -248,6 +248,7 @@ export function renderScene(sys, V, opts = {}) {
         case 'pin': case 'roller': {
           const B = byId.get(el.at?.el); if (!B) break;
           if (el.guide) { out.supports += g0 + drawGuide(B, el, V, env, c, sys) + '</g>'; break; }
+          if (el.track) { out.supports += g0 + drawTrack(B, el, V, env, D(B.id), c) + '</g>'; break; }
           const P = V.S(...portWorld(B, el.at.port, env, D(B.id)));
           out.supports += g0 + drawSupport(P, V.dir(el.angle ?? -90), el.type === 'roller', c) + '</g>';
           break;
@@ -346,6 +347,17 @@ export function renderScene(sys, V, opts = {}) {
   if (opts.showDofs) {
     for (const d of sys.dofs || []) {
       const B = byId.get(d.body); if (!B) continue;
+      if (d.coord === 's') {
+        // Weg entlang der Gleitbahn: Pfeil neben dem Gleitpunkt
+        const Bb = byId.get(B.at?.el); if (!Bb) continue;
+        const P = V.S(...portWorld(Bb, B.at.port, env, D(Bb.id)));
+        const t = V.dir((B.angle ?? -90) - 90), nrm = V.dir(B.angle ?? -90);
+        const cc = '#c2410c';
+        const o = add2(P, nrm, -22);
+        const a = add2(o, t, -18 * d.dir), b = add2(o, t, 18 * d.dir);
+        out.dofs += arrow(a, b, cc, 1.6) + text(b[0] + t[0] * d.dir * 12 - nrm[0] * 8, b[1] + t[1] * d.dir * 12 - nrm[1] * 8, labelSpans(d.name), { color: cc });
+        continue;
+      }
       const dd = D(B.id) || {};
       const C = V.S(B.x + (dd.u || 0), B.y + (dd.v || 0));
       const r = bodyExtent(B, env, V);
@@ -454,6 +466,27 @@ function drawRod(el, V, env, d, c) {
   else s += poly(pts, c, 1.3, '#fff', true);
   s += text(C[0] + n[0] * 22, C[1] + n[1] * 22, el.massless ? labelSpans(el.props.l) : labelSpans(el.props.m) + ', ' + labelSpans(el.props.l), { color: c });
   s += bodyNo(el, C[0] - n[0] * 14, C[1] - n[1] * 14);
+  return s;
+}
+/** Gleitbahn: raumfeste Bahnlinie mit Schraffur und mitbewegtem Gleitstein am Anschlusspunkt */
+function drawTrack(B, el, V, env, d, c) {
+  const P0 = V.S(...portWorld(B, el.at.port, env));
+  const P = V.S(...portWorld(B, el.at.port, env, d));
+  const tdeg = (el.angle ?? -90) - 90;
+  const t = V.dir(tdeg);
+  let side = V.dir(el.angle ?? -90);
+  const C = V.S(B.x, B.y);
+  // Schraffur auf der vom Körper abgewandten Seite
+  if ((C[0] - P0[0]) * side[0] + (C[1] - P0[1]) * side[1] > 0) side = [-side[0], -side[1]];
+  if (el.flip) side = [-side[0], -side[1]];
+  const L = 58 * Math.max(0.7, Math.min(Z, 1.2));
+  const R0 = add2(P0, side, 6);
+  const a = add2(R0, t, -L), b = add2(R0, t, L);
+  let s = seg(a, b, 'transparent', 14) + seg(a, b, c, 1.6) + hatch(a, b, side, c, 8, 7);
+  // Gleitstein
+  const n = side;
+  const box = [add2(add2(P, t, -9), n, 6), add2(add2(P, t, 9), n, 6), add2(add2(P, t, 9), n, -4), add2(add2(P, t, -9), n, -4)];
+  s += poly(box, c, 1.3, '#fff', true) + circ(P, 3.5, c, 1.4, '#fff');
   return s;
 }
 /** Führungsschiene neben einem Körper (raumfest): senkrechte oder waagrechte Führung */

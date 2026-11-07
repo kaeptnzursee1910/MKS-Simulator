@@ -6,7 +6,7 @@ import { tex, eqTex, matTex as matTex0, vecTex as vecTex0 } from '../cas/latex.j
 import { paramSym, parse } from '../cas/parse.js';
 import { buildModel } from './model.js';
 import { setupDofs, analyze, linearKinematics, exactKinematics } from './kinematics.js';
-import { gaussSolve, makeTestEnvs, independentRows } from './linalg.js';
+import { gaussSolve, makeTestEnvs, independentRows, numericallyZero } from './linalg.js';
 
 export const METHODS = {
   L1: 'Lagrange 1. Art',
@@ -152,6 +152,11 @@ function introRows(doc, model, dofs, lin, an) {
     const dir = d.coord === 'phi' ? (q.sign === 1 ? 'positiv gegen den Uhrzeigersinn' : 'positiv im Uhrzeigersinn')
       : d.coord === 'x' ? (q.sign === 1 ? 'positiv nach rechts' : 'positiv nach links')
         : (q.sign === 1 ? 'positiv nach oben' : 'positiv nach unten');
+    if (d.coord === 's') {
+      const tb = model.bodyOf.get(q.abs.track?.at?.el);
+      doc.math(q.tex + ' = ' + (q.sign === 1 ? '' : '-') + q.abs.tex, `Weg des Gleitpunkts entlang der Gleitbahn${tb ? ' (Körper ' + tb.label + ')' : ''}, ${q.sign === 1 ? 'positiv in Bahnrichtung' : 'positiv entgegen der Bahnrichtung'}`);
+      continue;
+    }
     const qb = model.bodies.find((b) => [b.X, b.Y, b.TH].includes(q.abs));
     doc.math(q.tex + ' = ' + (q.sign === 1 ? '' : '-') + q.abs.tex, `${d.coord === 'phi' ? (qb.pathAngle ? 'Bahnwinkel auf der Kreisbahn' : 'Drehwinkel') : 'Verschiebung'} von Körper ${qb.label}, ${dir}`);
   }
@@ -260,7 +265,16 @@ function deriveL2DAL(model, dofs, kin, lin, method, an) {
     for (const s of model.springs) {
       const dl = dLq.get(s.el.id);
       doc.math('\\Delta l_{' + texName(s.k, s) + '} = ' + TX(dl), 'Längenänderung ' + model.elName(s.el));
-      Uparts.push({ label: 'U_{' + texName(s.k, s) + '}', U: S(mul(num(1, 2), s.k, pow(dl, 2))) });
+      let Us = S(mul(num(1, 2), s.k, pow(dl, 2)));
+      if (lin) {
+        // vorgespannte Feder (Δl₀ ≠ 0): U = ½k(Δl₀ + Δl⁽¹⁾ + Δl⁽²⁾)² bis zur 2. Ordnung → zusätzlich k Δl₀ Δl⁽²⁾
+        const ser = series(toQ(s.dL), qs, 2);
+        if (!isZero(ser[0])) {
+          Us = S(add(Us, mul(s.k, ser[0], ser[2]), mul(s.k, ser[0], ser[1])));
+          doc.math('\\Delta l_{0} = ' + TX(ser[0]) + ', \\quad \\Delta l^{(2)} = ' + TX(ser[2]), 'Vorspannung ' + model.elName(s.el) + ' (Länge 2. Ordnung)');
+        }
+      }
+      Uparts.push({ label: 'U_{' + texName(s.k, s) + '}', U: Us });
     }
     for (const s of model.tsprings) Uparts.push({ label: 'U_{' + texName(s.k, s) + '}', U: S(mul(num(1, 2), s.k, pow(relq(s.rel), 2))) });
     for (const u of Uparts) doc.math(u.label + ' = ' + TX(u.U));
@@ -403,6 +417,12 @@ function deriveL1(model, dofs, lin, an) {
       mass.push(m);
     }
   }
+  // Gleitpunkt-Koordinaten (Weg entlang einer Gleitbahn): masselos, nur über ihre Bindung angekoppelt
+  for (const c of model.trackCoords?.values() || []) {
+    const q = dofs.coords.find((x) => x.abs === c);
+    pc.push(q || c);
+    mass.push(ZERO);
+  }
   const pvars = allVars(pc);
   const ps = pc.map((c) => c.s);
   const toP = (e) => S(sqrtsimp(subs(e, dofs.absSubs), dofs.refEnv));
@@ -488,6 +508,9 @@ function deriveL1(model, dofs, lin, an) {
       const envs = makeTestEnvs(dofs.refEnv, []);
       const A = pc.map((_, k) => cons.map((_, j) => G[j][k]));
       const sol = gaussSolve(A, f0.map((x) => [S(mul(MONE, x))]), envs);
+      if (!sol.error && sol.residual?.some((r) => !numericallyZero(r[0], envs))) {
+        doc.text('Hinweis: Die gezeichnete Lage ist keine Gleichgewichtslage (die eingeprägten Kräfte werden nicht allein von den Bindungen aufgenommen). Die Linearisierung mit statischen Zwangskräften λ₀ ist dann nur eine Näherung und kann von Lagrange 2. Art / d’Alembert-Lagrange abweichen – für große Bewegungen „nichtlinear“ verwenden.');
+      }
       if (!sol.error) {
         lam0 = sol.X.map((r) => r[0]);
         const s = add(...cons.map((c, j) => mul(lam0[j], c.g)));

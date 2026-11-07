@@ -350,6 +350,22 @@ const CASES = [
     },
     ref: ['(m_1 + m_2)*Q1dd + k*Q1'],
   },
+  {
+    name: 'Pendel mit vorgespannter Feder senkrecht am unteren Ende (geometrische Steifigkeit)',
+    modes: ['linear'],
+    sys: {
+      elements: [
+        { id: 'b1', type: 'rod', label: '1', x: 0, y: 0, angle: 90, props: { m: 'm', J: 'J', l: 'l' } },
+        { id: 'p1', type: 'pin', at: { el: 'b1', port: 'e2' }, angle: 90 },
+        { id: 'w1', type: 'fix', x: 0, y: -0.55, angle: 90 },
+        { id: 's1', type: 'spring', a: { el: 'b1', port: 'e1' }, b: { el: 'w1', port: 'c' }, props: { k: 'k', L0: 'L_0', Lz: 'h' } },
+      ],
+      params: { m: 1, J: 0.02, l: 0.5, k: 100, L_0: 0.2, h: 0.3, g: 9.81 }, gravity: true,
+      dofs: [{ id: 'q1', body: 'b1', coord: 'phi', dir: 1, name: 'phi' }],
+    },
+    // Federlänge bis 2. Ordnung: h + (l + l²/h) φ²/2  ⇒  Zusatzsteifigkeit k (h − L₀)(l + l²/h)
+    ref: ['(J + m*l^2/4)*Q1dd + (m*g*l/2 + k*(h - L_0)*(l + l^2/h))*Q1'],
+  },
 ];
 
 // ------------------------------------------------------------------

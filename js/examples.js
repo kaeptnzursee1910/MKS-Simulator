@@ -92,4 +92,43 @@ export const EXAMPLES = [
       sim: { init: { q1: { q: '0.02', qd: '0' } }, T: 3, h: 0.002, integrator: 'rk4' },
     },
   },
+  {
+    name: 'Gleitender Stab: Enden auf Gleitbahnen (45° und waagrecht), q = Weg von A',
+    nonlinearOnly: true,
+    sys: {
+      elements: [
+        { id: 'b1', type: 'rod', label: '1', x: 0.559808, y: 0.15, angle: -30, props: { m: 'm', l: 'l', J: 'm*l^2/12' } },
+        { id: 'tA', type: 'roller', track: true, at: { el: 'b1', port: 'e1' }, angle: 135 },
+        { id: 'tB', type: 'roller', track: true, at: { el: 'b1', port: 'e2' }, angle: 90 },
+        { id: 'w1', type: 'fix', x: 0, y: 0, angle: -90, style: 'pin' },
+        { id: 's1', type: 'spring', a: { el: 'w1', port: 'c' }, b: { el: 'b1', port: 'e1' }, props: { k: 'k', L0: 's_0', Lz: '3/10*sqrt(2)' } },
+        { id: 'f1', type: 'force', at: { el: 'b1', port: 'c' }, angle: 0, props: { F: 'F' } },
+      ],
+      params: { m: 1, l: 0.6, k: 200, s_0: 0.4, F: 5, g: 9.81 },
+      gravity: true,
+      dofs: [{ id: 'q1', body: 'tA', coord: 's', dir: 1, name: 'x_A' }],
+      method: 'L2', mode: 'nonlinear',
+      sim: { init: { q1: { q: '0', qd: '0' } }, T: 2, h: 0.001, integrator: 'rk4' },
+    },
+  },
+  {
+    name: 'Gelenkstäbe, Ende C gleitet senkrecht (nichtlinear)',
+    nonlinearOnly: true,
+    sys: {
+      elements: [
+        { id: 'b1', type: 'rod', label: '1', x: 0.216506, y: 0.125, angle: 30, props: { m: 'm', l: 'l', J: 'm*l^2/12' } },
+        { id: 'b2', type: 'rod', label: '2', x: 0.433013, y: 0.5, angle: 90, props: { m: 'm', l: 'l', J: 'm*l^2/12' } },
+        { id: 'p1', type: 'pin', at: { el: 'b1', port: 'e1' }, angle: -90 },
+        { id: 'h1', type: 'hinge', a: { el: 'b1', port: 'e2' }, b: { el: 'b2', port: 'e1' } },
+        { id: 'tC', type: 'roller', track: true, at: { el: 'b2', port: 'e2' }, angle: 180 },
+        { id: 'f1', type: 'force', at: { el: 'b2', port: 'e2' }, angle: 90, props: { F: 'F' } },
+        { id: 't1', type: 'tspring', a: 'b1', b: null, port: 'e1', props: { kt: 'k_T' } },
+      ],
+      params: { m: 1, l: 0.5, F: 3, k_T: 60, g: 9.81 },
+      gravity: true,
+      dofs: [{ id: 'q1', body: 'b1', coord: 'phi', dir: 1, name: 'phi' }],
+      method: 'DAL', mode: 'nonlinear',
+      sim: { init: { q1: { q: '0', qd: '0' } }, T: 2, h: 0.001, integrator: 'rk4' },
+    },
+  },
 ];
