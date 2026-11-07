@@ -154,7 +154,10 @@ function introRows(doc, model, dofs, lin, an) {
         : (q.sign === 1 ? 'positiv nach oben' : 'positiv nach unten');
     if (d.coord === 's') {
       const tb = model.bodyOf.get(q.abs.track?.at?.el);
-      doc.math(q.tex + ' = ' + (q.sign === 1 ? '' : '-') + q.abs.tex, `Weg des Gleitpunkts entlang der Gleitbahn${tb ? ' (Körper ' + tb.label + ')' : ''}, ${q.sign === 1 ? 'positiv in Bahnrichtung' : 'positiv entgegen der Bahnrichtung'}`);
+      const circ = q.abs.track?.circle;
+      doc.math(q.tex + ' = ' + (q.sign === 1 ? '' : '-') + q.abs.tex, circ
+        ? `Bahnwinkel des Gleitpunkts auf der kreisförmigen Gleitbahn${tb ? ' (Körper ' + tb.label + ')' : ''}, ${q.sign === 1 ? 'positiv gegen den Uhrzeigersinn' : 'positiv im Uhrzeigersinn'}`
+        : `Weg des Gleitpunkts entlang der Gleitbahn${tb ? ' (Körper ' + tb.label + ')' : ''}, ${q.sign === 1 ? 'positiv in Bahnrichtung' : 'positiv entgegen der Bahnrichtung'}`);
       continue;
     }
     const qb = model.bodies.find((b) => [b.X, b.Y, b.TH].includes(q.abs));

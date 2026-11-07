@@ -366,6 +366,22 @@ const CASES = [
     // Federlänge bis 2. Ordnung: h + (l + l²/h) φ²/2  ⇒  Zusatzsteifigkeit k (h − L₀)(l + l²/h)
     ref: ['(J + m*l^2/4)*Q1dd + (m*g*l/2 + k*(h - L_0)*(l + l^2/h))*Q1'],
   },
+  {
+    name: 'Stabende auf kreisförmiger Gleitbahn um das Lager (Bahnwinkel = Pendelwinkel)',
+    modes: ['linear', 'nonlinear'],
+    sys: {
+      elements: [
+        { id: 'b1', type: 'rod', label: '1', x: 0, y: -0.25, angle: 90, props: { m: 'm', J: 'J', l: 'l' } },
+        { id: 'p1', type: 'pin', at: { el: 'b1', port: 'e2' }, angle: 90 },
+        // Kreis berührt im Stabende die waagrechte Tangente, Mittelpunkt oben im Lager (ρ = l)
+        { id: 't1', type: 'roller', track: true, circle: true, side: 1, at: { el: 'b1', port: 'e1' }, angle: 90, props: { rho: 'l' } },
+      ],
+      params: { m: 1.2, J: 0.03, l: 0.5, g: 9.81 }, gravity: true,
+      dofs: [{ id: 'q1', body: 't1', coord: 's', dir: 1, name: 'psi' }],
+    },
+    ref: ['(J + m*l^2/4)*Q1dd + m*g*l/2*sin(Q1)'],
+    refLin: ['(J + m*l^2/4)*Q1dd + m*g*l/2*Q1'],
+  },
 ];
 
 // ------------------------------------------------------------------

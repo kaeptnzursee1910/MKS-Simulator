@@ -13,7 +13,7 @@ Browser-App zum **Zeichnen, Herleiten und Simulieren ebener Mehrkörpersysteme**
    - Verbindungen werden automatisch **gerade bzw. tangential an Scheiben** ausgerichtet; eine noch ungelagerte Masse rutscht dabei genau unter den Rollenrand.
    - Hängt eine Masse nur an senkrechten Verbindungen, wird sie wie in Skizzen üblich **senkrecht geführt** (Panel: „Führung“ frei / senkrecht / waagrecht).
    - **Masselose Stäbe** (eigenes Werkzeug oder Haken „masselos“ im Panel): ohne Masse und Trägheit, erscheinen nicht in den Formeln.
-   - **Gleitbahn:** vom Anschlusspunkt (z. B. Stabende) in Bahnrichtung ziehen; gezeichnet mit Bahnlinie, Schraffur und Gleitstein. Der **Weg entlang der Bahn** (z. B. x_A) ist als Freiheitsgrad wählbar.
+   - **Gleitbahn:** vom Anschlusspunkt (z. B. Stabende) in Bahnrichtung ziehen; gezeichnet mit Bahnlinie, Schraffur und Gleitstein. Der **Weg entlang der Bahn** (z. B. x_A) ist als Freiheitsgrad wählbar. **Kreisförmige Gleitbahn:** im Panel „◠ Kreis“ wählen (Radius ρ, Krümmungsseite) oder die Gleitbahn auf einen Punkt einer gezeichneten Kreisbahn setzen; Koordinate ist dann der Bahnwinkel ψ.
    - **Automatisch verbinden:** Legt man einen Körper auf ein Stabende bzw. eine Punktmasse (oder auf ein freies Feder-/Seilende), wird er per Gelenk angeschlossen. Lose übereinanderliegende Punkte meldet der Schritt „Freiheitsgrade“ mit Knopf „Verbinden“.
    - Stäbe rasten an Anschlusspunkten ein und werden dort **automatisch gelenkig** angeschlossen.
    - Beim Verschieben richten sich Körper an Anschlusspunkten anderer Elemente aus (**Hilfslinien**).
