@@ -166,22 +166,23 @@ function nextIndex(prefix) {
 // ------------------------------------------------------------ Palette
 const TOOLS = [
   ['Bearbeiten', [['select', 'Auswahl'], ['delete', 'Löschen']]],
-  ['Körper', [['block', 'Klotz'], ['disk', 'Scheibe'], ['stepdisk', 'Stufen­rolle'], ['rod', 'Stab'], ['point', 'Punkt­masse']]],
+  ['Körper', [['block', 'Klotz'], ['disk', 'Scheibe'], ['stepdisk', 'Stufen­rolle'], ['rod', 'Stab'], ['mrod', 'Stab masse­los'], ['point', 'Punkt­masse']]],
   ['Umgebung', [['ground', 'Boden'], ['curve', 'Kreis­bahn'], ['fix', 'Fest­punkt']]],
   ['Lager', [['pin', 'Fest­lager'], ['roller', 'Los­lager'], ['hinge', 'Gelenk'], ['roll', 'Rollen'], ['slide', 'Gleiten']]],
   ['Verbinder', [['rope', 'Seil'], ['spring', 'Feder'], ['damper', 'Dämpfer'], ['springdamper', 'Feder ∥ Dämpfer'], ['node', 'Knoten'], ['tspring', 'Dreh­feder'], ['tdamper', 'Dreh­dämpfer']]],
   ['Lasten', [['force', 'Kraft'], ['moment', 'Moment']]],
 ];
-const PORT_TOOLS = new Set(['pin', 'roller', 'hinge', 'rope', 'spring', 'damper', 'springdamper', 'force', 'rod']);
+const PORT_TOOLS = new Set(['pin', 'roller', 'hinge', 'rope', 'spring', 'damper', 'springdamper', 'force', 'rod', 'mrod']);
 const LINE_TOOLS = new Set(['rope', 'spring', 'damper', 'springdamper']);
 /** Werkzeuge, die zwei Punkte verbinden: Antippen–Antippen oder in einem Zug ziehen */
-const CONNECT_TOOLS = new Set([...LINE_TOOLS, 'hinge', 'tspring', 'tdamper', 'rod']);
+const CONNECT_TOOLS = new Set([...LINE_TOOLS, 'hinge', 'tspring', 'tdamper', 'rod', 'mrod']);
 const HINTS = {
   select: 'Element antippen zum Bearbeiten, Körper ziehen zum Verschieben (richtet sich an anderen Punkten aus), Leerfläche ziehen verschiebt die Ansicht.',
   delete: 'Element antippen, um es zu löschen.',
   block: 'Auf die Zeichenfläche tippen, um einen Klotz zu platzieren.',
   disk: 'Auf die Zeichenfläche tippen, um eine Scheibe zu platzieren.',
   stepdisk: 'Auf die Zeichenfläche tippen, um eine Stufenrolle (zwei Radien) zu platzieren.',
+  mrod: 'Masselosen Stab vom Anfangs- zum Endpunkt ziehen (oder beide antippen). Er hat keine Masse und keine Trägheit; an Anschlusspunkten wird er gelenkig angeschlossen.',
   rod: 'Stab vom Anfangs- zum Endpunkt ziehen (oder beide antippen), Winkel in 15°-Schritten. An Anschlusspunkten wird er gelenkig angeschlossen.',
   point: 'Auf die Zeichenfläche tippen, um eine Punktmasse zu platzieren.',
   ground: 'Auf die Zeichenfläche tippen, um einen Boden (Bahn) zu platzieren.',
@@ -450,6 +451,19 @@ function supportFreeEnd(fe, style) {
 }
 
 // ------------------------------------------------------------ Ausrichten, Geradeziehen, Führung
+/** Stab masselos machen (Masse/Trägheit entfernen) bzw. wieder mit Masse versehen */
+function setMassless(el, on) {
+  if (on) {
+    if (el.props.m !== undefined) el.massBackup = { m: el.props.m, J: el.props.J };
+    delete el.props.m; delete el.props.J;
+    el.massless = true;
+  } else {
+    const i = el.label;
+    const bk = el.massBackup || { m: `m_${i}`, J: `m_${i}*(${el.props.l})^2/12` };
+    el.props = { m: bk.m, l: el.props.l, J: bk.J };
+    delete el.massless; delete el.massBackup;
+  }
+}
 /** Befestigungspunkt einer Drehfeder am Körper: bei Stäben das nächstgelegene Ende bzw. die Mitte */
 function torsionPort(b, w) {
   if (b.type !== 'rod' && b.type !== 'block') return 'c';
@@ -727,7 +741,7 @@ function tap(sx, sy, target) {
   switch (t) {
     case 'select': state.sel = elG ? elG.dataset.id : null; break;
     case 'delete': if (elG) deleteElement(elG.dataset.id); return;
-    case 'rod': {
+    case 'rod': case 'mrod': {
       // Stabenden rasten an Anschlusspunkten anderer Körper ein und werden dort gelenkig angeschlossen
       const pp = portAt(sx, sy, 18, isBody);
       const pw = pp ? portWorld(byId(pp.el), pp.port, env()) : ws;
@@ -740,6 +754,7 @@ function tap(sx, sy, target) {
       else ang = Math.round((Math.atan2(pw[1] - p0[1], pw[0] - p0[0]) * 180) / Math.PI / 15) * 15;
       L = pp ? Math.max(0.05, round3(L)) : Math.max(0.05, Math.round(L / 0.05) * 0.05);
       const el = createBody('rod', p0);
+      if (t === 'mrod') setMassless(el, true);
       const a = (ang * Math.PI) / 180;
       el.angle = ang;
       el.x = round6(p0[0] + (L / 2) * Math.cos(a));
@@ -927,7 +942,7 @@ svg.addEventListener('pointerdown', (e) => {
   if (state.step === 'model' && CONNECT_TOOLS.has(state.tool) && !state.pending) {
     if (state.tool === 'tspring' || state.tool === 'tdamper') { const bb = bodyAt(e.target, sx, sy); connect = !!(bb && hasRotation(bb)); }
     else if (state.tool === 'hinge') connect = !!portAt(sx, sy, 20, isBody);
-    else if (state.tool === 'rod') connect = true;
+    else if (state.tool === 'rod' || state.tool === 'mrod') connect = true;
     else connect = !!(portAt(sx, sy, 18) || freeEndAt(sx, sy));
   }
   gesture = { kind: 'down', sx, sy, target: e.target, el: draggable ? el : null, ox: el?.x, oy: el?.y, grp, view0: { ...state.view }, moved: false, connect };
@@ -1191,7 +1206,10 @@ function panelModel() {
         h += '<p class="muted">Innenradius leer lassen für eine einfache Scheibe. Beispiele: <code>2*r</code>, <code>m*r^2/2</code>.</p>';
         break;
       case 'rod':
-        h += exprField('Masse m', 'm', el) + exprField('Länge l', 'l', el) + exprField('Trägheit J<sub>S</sub>', 'J', el) + angleField('Winkel' + unitTag('°'), el);
+        h += `<div class="field"><label>masselos</label><label class="row"><input type="checkbox" data-massless ${el.massless ? 'checked' : ''}> keine Masse, keine Trägheit</label></div>`;
+        if (el.massless) h += exprField('Länge l', 'l', el) + angleField('Winkel' + unitTag('°'), el);
+        else h += exprField('Masse m', 'm', el) + exprField('Länge l', 'l', el) + exprField('Trägheit J<sub>S</sub>', 'J', el) + angleField('Winkel' + unitTag('°'), el);
+        if (el.massless) h += '<p class="muted">Masseloser Stab: geht nur über seine Geometrie (Länge, Gelenke) in die Kinematik ein; m und J erscheinen nicht in den Formeln.</p>';
         break;
       case 'point': h += exprField('Masse m', 'm', el); break;
       case 'ground': h += angleField('Neigung' + unitTag('°'), el) + field('Länge (Zeichnung)' + unitTag('m'), 'len', el.len, { type: 'number', attrs: 'step="0.1" min="0.1"' }); break;
@@ -1341,6 +1359,7 @@ function bindModelPanel(el) {
   panel.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => { el.mode = b.dataset.mode; changed(); panelModel(); }));
   panel.querySelectorAll('[data-mdir]').forEach((b) => b.addEventListener('click', () => { el.dir = Number(b.dataset.mdir); changed(); panelModel(); }));
   panel.querySelector('[data-del]')?.addEventListener('click', () => deleteElement(el.id));
+  panel.querySelector('[data-massless]')?.addEventListener('change', (e) => { setMassless(el, e.target.checked); changed(); panelModel(); });
   panel.querySelectorAll('[data-tport]').forEach((b) => b.addEventListener('click', () => { if (b.dataset.tport === 'c') delete el.port; else el.port = b.dataset.tport; changed(); panelModel(); }));
   panel.querySelectorAll('[data-guide]').forEach((b) => b.addEventListener('click', () => { setGuide(el, b.dataset.guide); changed(); panelModel(); }));
   panel.querySelectorAll('[data-gdir]').forEach((b) => b.addEventListener('click', () => { el.angle = b.dataset.gdir === 'v' ? 180 : -90; el.auto = false; changed(); panelModel(); }));
@@ -1689,6 +1708,9 @@ function runSim() {
   } catch (e) {
     console.error(e);
     state.simError = e.message;
+    if (/Singul/.test(e.message) && state.sys.elements.some((x) => x.massless)) {
+      state.simError += ' – Das System enthält masselose Stäbe: Jeder Freiheitsgrad braucht Masse bzw. Trägheit (z. B. eine Punktmasse am Stabende), sonst ist die Massenmatrix singulär und nur die statische Gleichung gilt.';
+    }
     state.simOut = null;
   }
   panelSim();

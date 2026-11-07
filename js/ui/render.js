@@ -255,7 +255,9 @@ export function renderScene(sys, V, opts = {}) {
         case 'hinge': {
           const A = byId.get(el.a?.el); if (!A) break;
           const P = V.S(...portWorld(A, el.a.port, env, D(A.id)));
-          out.supports += g0 + circ(P, 9, 'transparent', 1, 'transparent') + circ(P, 4, c, 1.5, '#fff') + '</g>';
+          // Gelenk an einer Punktmasse: die gefüllte Masse bleibt sichtbar
+          const atPoint = A.type === 'point' || byId.get(el.b?.el)?.type === 'point';
+          out.supports += g0 + circ(P, 9, 'transparent', 1, 'transparent') + (atPoint ? '' : circ(P, 4, c, 1.5, '#fff')) + '</g>';
           break;
         }
         case 'contact': {
@@ -446,8 +448,11 @@ function drawRod(el, V, env, d, c) {
   const w = 4;
   const pts = [add2(e1, n, w), add2(e2, n, w), add2(e2, n, -w), add2(e1, n, -w)];
   const C = V.S(cx, cy);
-  let s = seg(e1, e2, 'transparent', 16) + poly(pts, c, 1.3, '#fff', true);
-  s += text(C[0] + n[0] * 22, C[1] + n[1] * 22, labelSpans(el.props.m) + ', ' + labelSpans(el.props.l), { color: c });
+  let s = seg(e1, e2, 'transparent', 16);
+  // masseloser Stab: einfache kräftige Linie, Beschriftung nur mit der Länge
+  if (el.massless) s += seg(e1, e2, c, 2.6);
+  else s += poly(pts, c, 1.3, '#fff', true);
+  s += text(C[0] + n[0] * 22, C[1] + n[1] * 22, el.massless ? labelSpans(el.props.l) : labelSpans(el.props.m) + ', ' + labelSpans(el.props.l), { color: c });
   s += bodyNo(el, C[0] - n[0] * 14, C[1] - n[1] * 14);
   return s;
 }
@@ -579,6 +584,7 @@ export function paletteIcon(tool) {
     case 'disk': return W(circ([20, 15], 11, c) + circ([20, 15], 2, c, 1.2, '#fff'));
     case 'stepdisk': return W(circ([20, 15], 12, c) + circ([20, 15], 6, c) + circ([20, 15], 1.6, c, 1, '#fff'));
     case 'rod': return W(poly([[7, 24], [33, 6], [35, 9], [9, 27]], c, 1.3, '#fff', true));
+    case 'mrod': return W(seg([8, 25], [34, 7], c, 2.6) + circ([8, 25], 2.6, c, 1.2, '#fff') + circ([34, 7], 2.6, c, 1.2, '#fff'));
     case 'point': return W(circ([20, 15], 5, c, 1.4, c));
     case 'node': return W(springPath([2, 15], [18, 15], c) + springPath([22, 15], [38, 15], c) + circ([20, 15], 3, c, 1.2, c));
     case 'ground': return W(seg([4, 14], [36, 14], c, 1.6) + hatch([4, 14], [36, 14], [0, 1], c, 6, 7));

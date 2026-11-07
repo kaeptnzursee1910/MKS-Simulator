@@ -154,8 +154,10 @@ export function buildModel(sys) {
     const onCurve = pointOnCurve(sys, el);
     const b = {
       el, label: lab,
-      m: propExpr(el, 'm'),
-      J: hasRotation(el) ? propExpr(el, 'J') : onCurve ? ZERO : null,
+      // masselose Stäbe: keine Masse/Trägheit – tauchen in T, U_G und den Gleichungen nicht auf
+      m: el.massless ? ZERO : propExpr(el, 'm'),
+      J: hasRotation(el) ? (el.massless ? ZERO : propExpr(el, 'J')) : onCurve ? ZERO : null,
+      massless: !!el.massless,
       X: makeCoord('X_' + el.id, 'x_{' + lab + '}', o + 1),
       Y: makeCoord('Y_' + el.id, 'y_{' + lab + '}', o + 2),
       TH: hasRotation(el) ? makeCoord('T_' + el.id, '\\vartheta_{' + lab + '}', o + 3) : onCurve ? makeCoord('T_' + el.id, '\\psi_{' + lab + '}', o + 3) : null,
