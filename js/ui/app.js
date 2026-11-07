@@ -1451,7 +1451,10 @@ function panelModel() {
   } else {
     h += `<h2>Modell</h2><p class="muted">Werkzeug links (am Handy oben) wählen und auf die Zeichenfläche tippen. Elemente mit „Auswahl“ antippen, um Parameter zu ändern.</p>`;
   }
-  h += `<h3>Parameter</h3><div class="card">${paramTable()}
+  // Zahlenwerte werden erst bei der Simulation eingestellt – hier nur die verwendeten Symbole
+  const pn = ensureParams(state.sys);
+  h += `<h3>Parameter</h3><div class="card">${pn.length ? `<div class="psyms">${pn.map((n) => `<span class="psym">${katexStr(nameTex(n))}</span>`).join('')}</div>` : '<p class="muted">Noch keine Parameter.</p>'}
+    <p class="muted">Die Bewegungsgleichungen werden mit diesen Symbolen hergeleitet. Zahlenwerte stellst du erst unter <b>4 Simulation</b> ein.</p>
     <div class="field"><label>Schwerkraft</label><label class="row"><input type="checkbox" data-grav ${state.sys.gravity ? 'checked' : ''}> Gewichtskraft (g nach unten)</label></div></div>`;
   h += `<button class="btn primary block" data-next="dof">Weiter: Freiheitsgrade →</button>`;
   panel.innerHTML = h;
@@ -1467,7 +1470,10 @@ function paramTable() {
 function bindParamInputs(root) {
   root.querySelectorAll('[data-param]').forEach((inp) => inp.addEventListener('input', () => {
     const v = parseFloat(inp.value);
-    if (Number.isFinite(v)) { state.sys.params[inp.dataset.param] = v; inp.classList.remove('bad'); updateAutoL0(); changed({ typing: true }); }
+    if (Number.isFinite(v)) {
+      state.sys.params[inp.dataset.param] = v; inp.classList.remove('bad'); updateAutoL0(); changed({ typing: true });
+      if (state.step === 'sim') { $('#player').hidden = true; const r = panel.querySelector('[data-run]'); if (r) r.textContent = '▶ Simulation mit neuen Werten starten'; }
+    }
     else inp.classList.add('bad');
   }));
 }
@@ -1791,6 +1797,7 @@ function panelSim() {
     panel.querySelector('[data-goto]')?.addEventListener('click', () => setStep('dof'));
     return;
   }
+  h += '<h3>Parameter</h3><div class="card">' + paramTable() + '<p class="muted">Zahlenwerte für die Simulation (SI-Einheiten). Längen und Radien ändern auch die Zeichnung.</p></div>';
   h += '<h3>Anfangswerte</h3><div class="card"><table class="ptable"><tr><td></td><td class="muted" style="font-family:system-ui;font-style:normal;font-size:12px">q(0)</td><td class="muted" style="font-size:12px">q̇(0)</td><td></td></tr>';
   for (const d of sys.dofs) {
     const iv = sys.sim.init[d.id] || (sys.sim.init[d.id] = { q: '0', qd: '0' });
@@ -1813,7 +1820,6 @@ function panelSim() {
       <div class="row" style="margin-top:8px"><span class="muted">${out.t.length} Ausgabepunkte, ${Math.ceil(sys.sim.T / sys.sim.h)} Schritte</span><button class="btn small" data-csv>CSV</button></div></div>`;
     h += `<h3>Darstellung</h3><div class="card">${field('Überhöhung', 'exag', state.anim.exag, { type: 'number', attrs: 'step="any" min="0"' })}<p class="muted">Vergrößert die Auslenkungen in der Animation (nur Darstellung).</p></div>`;
   }
-  h += '<h3>Parameter</h3><div class="card">' + paramTable() + '</div>';
   panel.innerHTML = h;
 
   bindParamInputs(panel);

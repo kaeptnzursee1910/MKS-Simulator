@@ -274,5 +274,7 @@ code { background: #eeece6; padding: 0 4px; border-radius: 4px; }
 .eq-row .katex-display { margin: 0.25em 0; text-align: left; }
 .eq-row .katex-display > .katex { text-align: left; }
 
+.psyms { display: flex; flex-wrap: wrap; gap: 4px 6px; margin: 2px 0 6px; }
+.psym { background: #f3f2ee; border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; font-size: 15px; }
 .unit { color: var(--muted); font-size: 0.85em; white-space: nowrap; }
 .unit-cell { color: var(--muted); font-size: 12px; white-space: nowrap; width: 1%; font-family: system-ui, sans-serif; font-style: normal; }
