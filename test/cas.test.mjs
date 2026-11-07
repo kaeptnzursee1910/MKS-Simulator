@@ -19,4 +19,6 @@ eq(tex(sqrtsimp(pow(add(parse('-L'),v),2).t?pow(pow(add(parse('-L'),v),2),num(1,
 const s=series(parse('sqrt((L+x)^2+y^2)'), [x,y], 2);
 console.log(s.map(tex));
 eq(tex(parse('0.25*k')), '\\frac{1}{4} k', 'dec');
+// sin/cos von a und −a: genau eines darf als „führend negativ“ gelten (sonst Endlosrekursion)
+eq(tex(add(sin(parse('e*q_1 - e*q_2')), sin(parse('e*q_2 - e*q_1')))), '0', 'sin odd (Summe)');
 console.log(fails? fails+' FAILS':'ALL OK');

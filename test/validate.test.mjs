@@ -274,6 +274,25 @@ const CASES = [
     },
     ref: ['m*Q1dd + k_1*k_2/(k_1 + k_2)*Q1 - m*g'],
   },
+  {
+    name: 'Zwei gelagerte Stäbe mit Drehfedern, dazwischen Feder ∥ Dämpfer (Klausur 2014-1, Aufgabe 2)',
+    modes: ['linear'],
+    sys: {
+      elements: [
+        { id: 'b1', type: 'rod', label: '1', x: 0.25, y: 0, angle: 0, props: { m: 'm', l: 'l', J: 'm*l^2/12' } },
+        { id: 'b2', type: 'rod', label: '2', x: 0.75, y: 0.3, angle: 0, props: { m: 'm', l: 'l', J: 'm*l^2/12' } },
+        { id: 'p1', type: 'pin', at: { el: 'b1', port: 'e1' }, angle: 180 },
+        { id: 'p2', type: 'pin', at: { el: 'b2', port: 'e2' }, angle: 0 },
+        { id: 's1', type: 'springdamper', a: { el: 'b1', port: 'e2' }, b: { el: 'b2', port: 'e1' }, props: { k: 'k', d: 'd', L0: '0.3' } },
+        { id: 't1', type: 'tspring', a: 'b1', b: null, props: { kt: 'k_T' } },
+        { id: 't2', type: 'tspring', a: 'b2', b: null, props: { kt: 'k_T' } },
+        { id: 'M1', type: 'moment', body: 'b1', dir: 1, props: { M: 'M_0' } },
+      ],
+      params: { m: 1.5, l: 0.5, k: 300, d: 4, k_T: 20, M_0: 2, g: 9.81 }, gravity: false,
+      dofs: [{ id: 'q1', body: 'b1', coord: 'phi', dir: 1, name: 'phi_1' }, { id: 'q2', body: 'b2', coord: 'phi', dir: 1, name: 'phi_2' }],
+    },
+    ref: ['m*l^2/3*Q1dd + d*l^2*(Q1d + Q2d) + k*l^2*(Q1 + Q2) + k_T*Q1 - M_0', 'm*l^2/3*Q2dd + d*l^2*(Q1d + Q2d) + k*l^2*(Q1 + Q2) + k_T*Q2'],
+  },
 ];
 
 // ------------------------------------------------------------------

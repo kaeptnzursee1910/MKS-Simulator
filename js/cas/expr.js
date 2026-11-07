@@ -262,7 +262,9 @@ export function leadingNegative(a) {
     let best = null, bestKey = null;
     for (const x of a.terms) {
       if (x.t === 'num') continue;
-      const rest = x.t === 'mul' && x.factors[0].t === 'num' ? (x.factors.length === 2 ? x.factors[1].key : x.factors.slice(1).map((f) => f.key).join(' ')) : x.key;
+      // Vergleichsschlüssel ohne Zahlenfaktor – für a und −a gleich gebildet, damit genau eines als negativ gilt
+      const fs = x.t === 'mul' ? (x.factors[0].t === 'num' ? x.factors.slice(1) : x.factors) : [x];
+      const rest = fs.map((f) => f.key).join(' ');
       if (bestKey === null || rest < bestKey) { bestKey = rest; best = x; }
     }
     return best ? leadingNegative(best) : false;

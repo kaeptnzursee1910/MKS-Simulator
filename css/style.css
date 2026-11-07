@@ -90,6 +90,19 @@ code { background: #eeece6; padding: 0 4px; border-radius: 4px; }
 .hint:empty { display: none; }
 .zoom-ctl { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 4px; }
 .zoom-ctl button { width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--line); background: var(--paper); font-size: 17px; }
+.edit-ctl { position: absolute; left: 10px; top: 10px; display: flex; gap: 4px; }
+.edit-ctl button, .seltools button {
+  width: 36px; height: 34px; border-radius: 8px; border: 1px solid var(--line); background: var(--paper); font-size: 18px; line-height: 1;
+}
+.edit-ctl button:disabled { opacity: .35; cursor: default; }
+#app:not(.step-model) .edit-ctl, #app:not(.step-model) .seltools { display: none; }
+.seltools {
+  position: absolute; display: flex; gap: 3px; padding: 3px; background: rgba(255,255,255,.96);
+  border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 4px 14px rgba(0,0,0,.12); z-index: 4;
+}
+.seltools button { border: 0; width: 34px; height: 32px; font-size: 17px; }
+.seltools button:hover, .edit-ctl button:hover:not(:disabled) { background: var(--accent-soft); }
+.seltools button.danger { color: var(--err); font-size: 15px; }
 .player {
   position: absolute; left: 10px; right: 10px; top: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   background: rgba(255,255,255,.94); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 10px; font-size: 13px;
@@ -241,6 +254,7 @@ code { background: #eeece6; padding: 0 4px; border-radius: 4px; }
 /* ---------- Touch-Geräte allgemein */
 @media (max-width: 860px), (max-height: 500px) {
   .hint { top: 8px; bottom: auto; left: 8px; right: 8px; font-size: 12px; line-height: 1.3; }
+  .edit-ctl { top: auto; bottom: 10px; left: 8px; }
   .hint.action { pointer-events: auto; color: var(--accent); background: var(--accent-soft); cursor: pointer; }
   .field { grid-template-columns: 96px 1fr; }
   .player { top: 6px; left: 6px; right: 6px; padding: 4px 8px; gap: 6px; }
@@ -253,6 +267,8 @@ code { background: #eeece6; padding: 0 4px; border-radius: 4px; }
   .seg button, .chip, .btn.small { min-height: 34px; }
   .chip { min-width: 38px; }
   .zoom-ctl button { width: 40px; height: 40px; }
+  .edit-ctl button { width: 42px; height: 40px; }
+  .seltools button { width: 40px; height: 38px; }
 }
 
 .eq-row .katex-display { margin: 0.25em 0; text-align: left; }

@@ -156,7 +156,10 @@ export function buildModel(sys) {
   const refEnv = { ...env };
   for (const c of absCoords) { refEnv[c.s.name] = 0; refEnv[c.d.name] = 0; refEnv[c.dd.name] = 0; }
 
-  const elName = (el) => TYPES[el.type].name + (el.label ? ' ' + el.label : '');
+  const elName = (el) => {
+    if (el.guide) { const b = byId.get(el.at?.el); return 'Führung' + (b?.label ? ' Körper ' + b.label : ''); }
+    return TYPES[el.type].name + (el.label ? ' ' + el.label : '');
+  };
   const anchor = (ref) => {
     const el = byId.get(ref?.el);
     if (!el) throw new Error('Ein Element ist nicht (mehr) verbunden.');
