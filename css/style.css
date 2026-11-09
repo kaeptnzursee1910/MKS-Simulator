@@ -32,6 +32,7 @@ code { background: #eeece6; padding: 0 4px; border-radius: 4px; }
 .brand { display: flex; align-items: baseline; gap: 6px; font-weight: 700; white-space: nowrap; }
 .logo { font-family: "Times New Roman", serif; font-style: italic; font-size: 22px; }
 .brand-text { font-size: 15px; color: var(--muted); font-weight: 500; }
+@media (max-width: 1100px) { .brand-text { display: none; } }
 .steps { display: flex; gap: 4px; margin: 0 auto; }
 .steps button {
   display: flex; align-items: center; gap: 6px; border: 1px solid transparent; background: none;

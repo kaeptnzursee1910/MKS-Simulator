@@ -10,7 +10,7 @@ import { renderScene, makeView, paletteIcon, labelSpans, lineGeometry } from './
 import { Plot, SERIES_COLORS } from './plot.js';
 import { EXAMPLES } from '../examples.js';
 
-const LS_KEY = 'mks-simulator-v1';
+const LS_KEY = 'mks-simulator-v1'; // Schlüssel aus der Zeit vor der Umbenennung – bleibt, damit gespeicherte Modelle erhalten bleiben
 const $ = (s, r = document) => r.querySelector(s);
 const svg = $('#canvas');
 const app = $('#app');
@@ -2011,11 +2011,11 @@ menu.addEventListener('click', (e) => {
   if (b.dataset.ex !== undefined) { loadSystem(EXAMPLES[Number(b.dataset.ex)].sys); toast('Beispiel geladen: ' + EXAMPLES[Number(b.dataset.ex)].name); return; }
   switch (b.dataset.act) {
     case 'new': if (confirm('Aktuelles System verwerfen und neu beginnen?')) loadSystem(emptySystem()); break;
-    case 'export': download('mks-system.json', JSON.stringify({ format: 'mks-simulator', version: 1, sys: state.sys }, null, 1), 'application/json'); break;
+    case 'export': download('lagrangia-system.json', JSON.stringify({ format: 'mks-simulator', version: 1, sys: state.sys }, null, 1), 'application/json'); break;
     case 'import': $('#file-input').click(); break;
     case 'svg': {
       const st = '<style>text{font-family:"Times New Roman",serif}.lbl{font-style:italic;font-size:17px}.bodyno{font-size:10px;fill:#999}.grid,.port,.port-hit{display:none}</style>';
-      download('mks-zeichnung.svg', `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${svg.getAttribute('viewBox')}">${st}<rect width="100%" height="100%" fill="#fff"/>${svg.innerHTML}</svg>`, 'image/svg+xml');
+      download('lagrangia-zeichnung.svg', `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${svg.getAttribute('viewBox')}">${st}<rect width="100%" height="100%" fill="#fff"/>${svg.innerHTML}</svg>`, 'image/svg+xml');
       break;
     }
     case 'help': $('#help').hidden = false; break;
