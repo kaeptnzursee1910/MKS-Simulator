@@ -1,4 +1,6 @@
-# MKS-Simulator
+# Lagrangia
+
+*(früher: MKS-Simulator)*
 
 Browser-App zum **Zeichnen, Herleiten und Simulieren ebener Mehrkörpersysteme** – am PC und auf dem Handy, ohne Installation und ohne Server.
 
